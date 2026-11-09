@@ -1,3 +1,5 @@
 secrets.yaml
 .esphome/
 __pycache__/
+preview/build/
+preview/out/

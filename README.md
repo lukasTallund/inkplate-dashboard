@@ -17,6 +17,7 @@ once an hour to clear ghosting.
 | `dashboard.h` | Layout and drawing (C++) |
 | `ha/inkplate_dashboard.yaml` | HA package with the three template sensors the device reads |
 | `secrets.yaml` | Wi-Fi, API key, guest Wi-Fi QR. Gitignored; see `secrets.example.yaml` |
+| `preview/` | Renders `dashboard.h` to PNGs on your computer, no flashing needed |
 
 ## Data flow
 
@@ -54,6 +55,24 @@ minute, even when HASL updates less often.
 HA connects *to* the device on TCP 6053, the ESPHome API. If the Inkplate is
 on an isolated IoT VLAN, allow HA to reach it on that port. OTA is TCP 3232
 from whichever machine is flashing, to the device.
+
+## Previewing without flashing
+
+```sh
+preview/render.sh
+```
+
+This compiles `dashboard.h` natively against a small stand-in for ESPHome's
+display and font code and writes one PNG per scenario to `preview/out/`
+(`photo`, `busy`, `evening`, `guest`). Fonts, sizes and glyph lists are read
+from `dashboard.yaml`, and text is measured and placed the way ESPHome does
+it, so the result matches the panel closely. A glyph a font doesn't include
+is drawn as a box and reported as a warning.
+
+It needs `g++`, FreeType and libpng headers, and one earlier
+`esphome compile dashboard.yaml`, which downloads the fonts and the QR
+library into `.esphome/`. The canned data lives in `preview/main.cpp`; add a
+scenario there when you find a layout edge case.
 
 ## Changing things
 

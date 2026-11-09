@@ -8,12 +8,15 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
 
 - Inkplate 10 v2: PCAL6416A IO expander at 0x20. The v1 board had an
   MCP23017. 8 MB PSRAM.
-- Wall powered and always on. Redraws every minute on the minute.
+- Wall powered and always on. Redraws every minute on the minute. A Li-ion
+  battery may be fitted as backup only, so no deep sleep or power saving.
 - `inkplate-dashboard.local` = 192.168.20.46 on the IoT VLAN. HA is
   192.168.1.23 and reaches the API on 6053.
 - Flash: `esphome run dashboard.yaml --device OTA`. OTA from the laptop on
   192.168.10.x works. Over USB it shows up as CH340 on `/dev/ttyUSB0`, and the
   port sometimes needs a retry.
+- Preview: `preview/render.sh` renders every scenario to `preview/out/*.png`.
+  Check layout changes there before flashing.
 - Logs: `esphome logs dashboard.yaml --device OTA`. Each redraw logs a
   `[dash]` line with the byte count of every data feed.
 

@@ -177,6 +177,14 @@ number:
     on_value:
       - lambda: "id(epaper).set_full_update_every((uint32_t) x);"
 
+switch:
+  # Connects the battery voltage divider (see the battery sensors).
+  - platform: gpio
+    id: battery_read
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin: { pca6416a: io_int, number: 9 }
+
 button:
   - platform: template
     name: Show guest Wi-Fi
@@ -268,6 +276,55 @@ sensor:
   - platform: uptime
     name: Uptime
 
+  # Backup battery. The voltage divider on GPIO35 is only connected while
+  # IO expander pin 9 switches it in, so it doesn't drain the battery.
+  # Read while on USB, it shows the charge voltage (about 4.2 V when full or
+  # with no battery fitted), so the percentage is a rough guide.
+  - platform: adc
+    id: battery_adc
+    pin: 35
+    attenuation: 12db
+    update_interval: never
+    internal: true
+  - platform: template
+    id: battery_voltage
+    name: Battery voltage
+    device_class: voltage
+    state_class: measurement
+    unit_of_measurement: V
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      id(battery_read).turn_on();
+      delay(5);
+      float v = id(battery_adc).sample() * 2;  // 1:2 divider
+      id(battery_read).turn_off();
+      return v;
+    on_value:
+      - component.update: battery_level
+  - platform: template
+    id: battery_level
+    name: Battery
+    device_class: battery
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: never
+    # Li-ion resting voltage to charge, linear between points.
+    lambda: |-
+      static const float pts[][2] = {
+        {3.30f, 0}, {3.60f, 10}, {3.70f, 25}, {3.75f, 40}, {3.80f, 50},
+        {3.90f, 65}, {4.00f, 80}, {4.10f, 92}, {4.20f, 100},
+      };
+      float v = id(battery_voltage).state;
+      if (std::isnan(v)) return NAN;
+      if (v <= pts[0][0]) return 0.0f;
+      for (int i = 1; i < 9; i++)
+        if (v < pts[i][0])
+          return pts[i-1][1] + (v - pts[i-1][0]) / (pts[i][0] - pts[i-1][0]) * (pts[i][1] - pts[i-1][1]);
+      return 100.0f;
+
 # -------------------------------------------------------------------- fonts
 # Roboto from Google Fonts; GF_Latin_Core covers å/ä/ö, °, ·, – and …
 # Icons are Material Design Icons code points (see dashboard.h).
@@ -275,7 +332,7 @@ sensor:
 font:
   - file: { type: gfonts, family: Roboto, weight: 700 }
     id: font_clock
-    size: 150
+    size: 128
     glyphs: "0123456789:-"
   - file: { type: gfonts, family: Roboto, weight: 300 }
     id: font_temp
@@ -320,7 +377,7 @@ font:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
     id: icons_xl
-    size: 120
+    size: 88
     glyphs:
       - "\U000F0599" # weather-sunny
       - "\U000F0594" # weather-night
@@ -338,7 +395,6 @@ font:
       - "\U000F059D" # weather-windy
       - "\U000F059E" # weather-windy-variant
       - "\U000F0F2F" # weather-cloudy-alert
-      - "\U000F05A9" # wifi (guest screen)
   - file: *mdi
     id: icons_l
     size: 56

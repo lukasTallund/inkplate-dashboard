@@ -6,9 +6,10 @@
 // Data arrives from Home Assistant as compact text: one record per line,
 // fields separated by '|'. See ha/inkplate_dashboard.yaml for the producers.
 //
-// Design: white page, no boxes. A hero row (time, date, current weather)
-// above a hairline, then two columns with small uppercase section labels:
-// an agenda on the left, departures and the forecast on the right.
+// Design: white page, no boxes. A hero row (time, date, current weather),
+// then two columns with small uppercase section labels: an agenda on the
+// left, the hourly forecast and departures on the right. The guest Wi-Fi
+// screen keeps the hero and swaps the columns for the network and QR code.
 
 #include <algorithm>
 #include <cmath>
@@ -33,13 +34,13 @@ static const Color PAPER = Color(255, 255, 255);
 
 static const int W = 1200, H = 825;
 static const int MX = 44;          // side margin
-static const int TOP = 30;         // top margin
+static const int TOP = 24;         // top margin
 static const int BOTTOM = H - 30;  // last usable y
 
-static const int HERO_Y = TOP, HERO_H = 150;
-static const int RULE_Y = HERO_Y + HERO_H + 14;
+static const int HERO_Y = TOP, HERO_H = 128;
 
-static const int COL_Y = RULE_Y + 30;
+static const int COL_Y = HERO_Y + HERO_H + 24;
+static const int LABEL_GAP = 40;  // section label to its first line
 static const int LEFT_X = MX, LEFT_W = 580;
 static const int RIGHT_X = 676, RIGHT_W = W - MX - RIGHT_X;
 
@@ -48,13 +49,11 @@ static const int RIGHT_X = 676, RIGHT_W = W - MX - RIGHT_X;
 static const int FORECAST_Y = COL_Y;
 static const int FORECAST_SLOTS = 6;   // columns
 static const int FORECAST_STEP_H = 2;  // hours between columns
-static const int BUS_Y = FORECAST_Y + 48 + 172 + 26;
+static const int FORECAST_H = 174;     // hour, icon, temp, wind, rain
+static const int BUS_Y = FORECAST_Y + LABEL_GAP + FORECAST_H + 22;
 static const int BUS_ROWS = 4;
 static const int BUS_ROW_H = 62;
 static const int CAL_DAYS = 5;
-
-// Material Design Icons code points (fonts icons_*).
-#define ICON_WIFI "\U000F05A9"
 
 // ------------------------------------------------------------- data types --
 
@@ -248,6 +247,26 @@ static std::string degrees(float v) {
   return buf;
 }
 
+// Whole degrees, never "-0°".
+static std::string wholeDegrees(float v) {
+  char buf[16];
+  long n = std::lround(v);
+  snprintf(buf, sizeof(buf), "%ld°", n);
+  return buf;
+}
+
+// Wind chill (the JAG/TI formula SMHI also uses) from °C and m/s. Only
+// defined in the cold with some wind; otherwise the air temperature.
+static float feelsLike(float t, float wind) {
+  if (std::isnan(t) || std::isnan(wind))
+    return t;
+  float kmh = wind * 3.6f;
+  if (t > 10.f || kmh < 4.8f)
+    return t;
+  float p = std::pow(kmh, 0.16f);
+  return 13.12f + 0.6215f * t - 11.37f * p + 0.3965f * t * p;
+}
+
 static const char *weatherIcon(const std::string &c, bool night) {
   if (c == "sunny")
     return night ? "\U000F0594" : "\U000F0599";
@@ -310,18 +329,26 @@ static std::string weatherText(const std::string &c) {
   return "";
 }
 
-// Hourly forecast record: epoch | condition | temperature | precipitation
+// Hourly forecast record: epoch | condition | temperature | precipitation | wind
 struct Hour {
   time_t t;
   std::string condition;
-  float temp, precip;
+  float temp, precip, wind;
 };
+
+// Optional numeric field; NAN when missing (older HA package) or empty.
+static float field(const std::vector<std::string> &r, size_t i) {
+  if (i >= r.size() || r[i].empty() || r[i] == "None")
+    return NAN;
+  return (float) atof(r[i].c_str());
+}
 
 static std::vector<Hour> hours(const std::string &s) {
   std::vector<Hour> out;
-  for (auto &r : records(s, 3))
-    out.push_back({(time_t) atoll(r[0].c_str()), r[1], r[2].empty() ? NAN : (float) atof(r[2].c_str()),
-                   r.size() > 3 && !r[3].empty() && r[3] != "None" ? (float) atof(r[3].c_str()) : 0.f});
+  for (auto &r : records(s, 3)) {
+    float precip = field(r, 3);
+    out.push_back({(time_t) atoll(r[0].c_str()), r[1], field(r, 2), std::isnan(precip) ? 0.f : precip, field(r, 4)});
+  }
   return out;
 }
 
@@ -352,13 +379,19 @@ static bool dayRange(const std::vector<Hour> &hs, time_t day, float &lo, float &
   return lo <= hi;
 }
 
-// Small uppercase label with a hairline running to the end of the column.
-static void sectionLabel(Display &it, const Fonts &f, int x, int y, int w, const std::string &text) {
+// Small uppercase label with a hairline running to the end of the column,
+// or up to `aside`, which is printed right-aligned in the same style.
+static void sectionLabel(Display &it, const Fonts &f, int x, int y, int w, const std::string &text,
+                         const std::string &aside = "") {
   std::string t = upper(text);
   it.print(x, y, f.label, INK, TextAlign::TOP_LEFT, t.c_str());
-  int tw = textWidth(it, f.label, t);
-  int lh = lineHeight(it, f.label);
-  it.filled_rectangle(x + tw + 14, y + lh / 2, w - tw - 14, 2, INK);
+  int start = x + textWidth(it, f.label, t) + 14;
+  int end = x + w;
+  if (!aside.empty()) {
+    it.print(end, y, f.label, INK, TextAlign::TOP_RIGHT, aside.c_str());
+    end -= textWidth(it, f.label, aside) + 14;
+  }
+  it.filled_rectangle(start, y + lineHeight(it, f.label) / 2, end - start, 2, INK);
 }
 
 // ------------------------------------------------------------------- hero --
@@ -366,55 +399,60 @@ static void sectionLabel(Display &it, const Fonts &f, int x, int y, int w, const
 static void drawHero(Display &it, const Fonts &f, const Data &d) {
   // Time
   std::string t = d.now ? fmt(d.now, "%H:%M") : "--:--";
-  it.print(MX - 4, HERO_Y - 8, f.clock, INK, TextAlign::TOP_LEFT, t.c_str());
+  it.print(MX - 3, HERO_Y - 8, f.clock, INK, TextAlign::TOP_LEFT, t.c_str());
   int tw = textWidth(it, f.clock, t);
 
-  // Date, stacked next to the time
+  // Date, stacked next to the time. `free` is where the weather line may start.
+  int free = MX + tw + 26;
   if (d.now) {
-    int x = MX + tw + 30;
+    int x = MX + tw + 26;
     std::string wd = fmt(d.now, "%A"), dm = fmt(d.now, "%e %B");
-    it.print(x, HERO_Y + 40, f.date, INK, TextAlign::TOP_LEFT, wd.c_str());
-    it.print(x, HERO_Y + 82, f.dateLight, INK, TextAlign::TOP_LEFT, dm.c_str());
+    it.print(x, HERO_Y + 30, f.date, INK, TextAlign::TOP_LEFT, wd.c_str());
+    it.print(x, HERO_Y + 72, f.dateLight, INK, TextAlign::TOP_LEFT, dm.c_str());
+    free = x + std::max(textWidth(it, f.date, wd), textWidth(it, f.dateLight, dm)) + 32;
   }
 
-  // Current weather, right-aligned: icon, temperature, condition · wind
+  // Current weather, right-aligned: icon and temperature...
   int right = W - MX;
   if (!std::isnan(d.temperature)) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%.1f°", d.temperature);
-    it.print(right, HERO_Y + 6, f.temp, INK, TextAlign::TOP_RIGHT, buf);
+    it.print(right, HERO_Y - 6, f.temp, INK, TextAlign::TOP_RIGHT, buf);
     int w = textWidth(it, f.temp, buf);
     bool night = d.now && (local(d.now).tm_hour < 6 || local(d.now).tm_hour >= 20);
-    it.print(right - w - 18, HERO_Y + 2, f.iconXL, INK, TextAlign::TOP_RIGHT, weatherIcon(d.condition, night));
+    it.print(right - w - 14, HERO_Y - 2, f.iconXL, INK, TextAlign::TOP_RIGHT, weatherIcon(d.condition, night));
   }
-  // Condition · today's range · wind: what decides the jacket.
-  std::vector<std::string> parts;
-  if (!weatherText(d.condition).empty())
-    parts.push_back(weatherText(d.condition));
-  float lo, hi;
-  if (d.now && local(d.now).tm_hour < 20 && dayRange(hours(d.forecast), dayStart(d.now, 0), lo, hi)) {
-    // Include the current reading so the range never excludes "now".
-    if (!std::isnan(d.temperature)) {
-      lo = std::min(lo, d.temperature);
-      hi = std::max(hi, d.temperature);
-    }
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%.0f°–%.0f° today", lo, hi);
-    parts.push_back(buf);
-  }
+
+  // ...and below them what decides the jacket: condition · feels like · wind.
+  // When it doesn't fit beside the date, drop the condition first (the icon
+  // already shows it), then the gusts.
+  std::string cond = weatherText(d.condition), feels, wind, gusts;
+  float fl = feelsLike(d.temperature, d.windSpeed);
+  if (!std::isnan(fl) && std::lround(fl) != std::lround(d.temperature))
+    feels = "Feels like " + wholeDegrees(fl);
   if (!std::isnan(d.windSpeed)) {
     char buf[32];
-    if (!std::isnan(d.windGust) && d.windGust >= d.windSpeed + 2)
-      snprintf(buf, sizeof(buf), "%.0f m/s, gusts %.0f", d.windSpeed, d.windGust);
-    else
-      snprintf(buf, sizeof(buf), "%.0f m/s", d.windSpeed);
-    parts.push_back(buf);
+    snprintf(buf, sizeof(buf), "%.0f m/s", d.windSpeed);
+    wind = buf;
+    if (!std::isnan(d.windGust) && d.windGust >= d.windSpeed + 2) {
+      snprintf(buf, sizeof(buf), ", gusts %.0f", d.windGust);
+      gusts = buf;
+    }
   }
+  auto join = [](std::initializer_list<std::string> parts) {
+    std::string out;
+    for (auto &p : parts)
+      if (!p.empty())
+        out += (out.empty() ? "" : "  ·  ") + p;
+    return out;
+  };
   std::string sub;
-  for (auto &p : parts)
-    sub += (sub.empty() ? "" : "  ·  ") + p;
-  it.print(right, HERO_Y + 104, f.body, INK, TextAlign::TOP_RIGHT, sub.c_str());
-
+  for (auto &candidate : {join({cond, feels, wind + gusts}), join({feels, wind + gusts}), join({feels, wind})}) {
+    sub = candidate;
+    if (textWidth(it, f.body, sub) <= right - free)
+      break;
+  }
+  it.print(right, HERO_Y + 86, f.body, INK, TextAlign::TOP_RIGHT, sub.c_str());
 }
 
 // ----------------------------------------------------------------- agenda --
@@ -442,7 +480,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
   const int hBody = lineHeight(it, f.body);
   const int hSmall = lineHeight(it, f.small);
 
-  int y = COL_Y + 50;
+  int y = COL_Y + LABEL_GAP;
   int hidden = 0;
   bool full = false;
 
@@ -468,15 +506,16 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
     std::string title = day == 0 ? "Today" : day == 1 ? "Tomorrow" : fmt(ds, "%A");
     std::string date = fmt(ds, "%e %b");
     it.print(LEFT_X, y, f.heading, INK, TextAlign::TOP_LEFT, title.c_str());
-    it.print(LEFT_X + textWidth(it, f.heading, title) + 12, y + 3, f.small, INK, TextAlign::TOP_LEFT,
-             date.c_str());
-    y += hHead + 14;
+    int dateX = LEFT_X + textWidth(it, f.heading, title) + 12;
+    it.print(dateX, y + 3, f.small, INK, TextAlign::TOP_LEFT, date.c_str());
 
+    // An empty today stays on its heading line instead of taking a row.
     if (todays.empty()) {
-      it.print(textX, y, f.body, INK, TextAlign::TOP_LEFT, "Nothing planned");
-      y += hBody + 30;
+      it.print(dateX + textWidth(it, f.small, date) + 28, y, f.body, INK, TextAlign::TOP_LEFT, "Nothing planned");
+      y += hHead + 18;
       continue;
     }
+    y += hHead + 8;
 
     for (size_t i = 0; i < todays.size(); i++) {
       const Event *e = todays[i];
@@ -508,9 +547,9 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
       }
       if (!loc.empty())
         it.print(textX, ty + 2, f.small, INK, TextAlign::TOP_LEFT, loc.c_str());
-      y += h + 20;
+      y += h + 12;
     }
-    y += 12;
+    y += 10;
   }
 
   if (hidden > 0 && y + hSmall <= BOTTOM + hSmall) {
@@ -525,7 +564,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
 static void drawDepartures(Display &it, const Fonts &f, const Data &d) {
   sectionLabel(it, f, RIGHT_X, BUS_Y, RIGHT_W, d.stopName);
   int right = RIGHT_X + RIGHT_W;
-  int y = BUS_Y + 52;
+  int y = BUS_Y + LABEL_GAP + 8;
   int shown = 0;
 
   for (auto &r : records(d.departures, 3)) {
@@ -586,13 +625,31 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
   auto hs = hours(d.forecast);
   bool tomorrow = false;
   time_t start = d.now ? forecastStart(d.now, tomorrow) : 0;
-  sectionLabel(it, f, RIGHT_X, FORECAST_Y, RIGHT_W, tomorrow ? "Tomorrow" : "Later today");
-  int y = FORECAST_Y + 48;
+
+  // The day's range sits on the label line: low–high from 06 to 22.
+  std::string range;
+  float lo, hi;
+  if (d.now && dayRange(hs, dayStart(d.now, tomorrow ? 1 : 0), lo, hi)) {
+    // Include the current reading so today's range never excludes "now".
+    if (!tomorrow && !std::isnan(d.temperature)) {
+      lo = std::min(lo, d.temperature);
+      hi = std::max(hi, d.temperature);
+    }
+    range = wholeDegrees(lo) + " – " + wholeDegrees(hi);
+  }
+  sectionLabel(it, f, RIGHT_X, FORECAST_Y, RIGHT_W, tomorrow ? "Tomorrow" : "Later today", range);
+
+  int y = FORECAST_Y + LABEL_GAP;
   if (hs.empty() || !d.now) {
     it.print(RIGHT_X, y, f.body, INK, TextAlign::TOP_LEFT, "Waiting for forecast…");
     return;
   }
-  int colW = RIGHT_W / FORECAST_SLOTS;
+  // Wind and rain rows are bare numbers; their units label the rows on the
+  // left, like a table. The rain row only appears when some slot has rain.
+  const int legendW = 44;
+  const int colW = (RIGHT_W - legendW) / FORECAST_SLOTS;
+  const int colX = RIGHT_X + legendW;
+  bool anyRain = false, anyWind = false;
   for (int i = 0; i < FORECAST_SLOTS; i++) {
     time_t slot = start + (time_t) i * FORECAST_STEP_H * 3600;
     const Hour *h = nullptr;
@@ -601,20 +658,30 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
         h = &x;
         break;
       }
-    int cx = RIGHT_X + colW * i + colW / 2;
+    int cx = colX + colW * i + colW / 2;
     it.print(cx, y, f.small, INK, TextAlign::TOP_CENTER, fmt(slot, "%H").c_str());
     if (h == nullptr)
       continue;
     int hr = local(slot).tm_hour;
-    it.print(cx, y + 30, f.iconL, INK, TextAlign::TOP_CENTER, weatherIcon(h->condition, hr < 6 || hr >= 20));
+    it.print(cx, y + 26, f.iconL, INK, TextAlign::TOP_CENTER, weatherIcon(h->condition, hr < 6 || hr >= 20));
     if (!std::isnan(h->temp))
-      it.print(cx, y + 92, f.heading, INK, TextAlign::TOP_CENTER, degrees(h->temp).c_str());
+      it.print(cx, y + 84, f.heading, INK, TextAlign::TOP_CENTER, degrees(h->temp).c_str());
+    char buf[16];
+    if (!std::isnan(h->wind)) {
+      snprintf(buf, sizeof(buf), "%.0f", h->wind);
+      it.print(cx, y + 120, f.small, INK, TextAlign::TOP_CENTER, buf);
+      anyWind = true;
+    }
     if (h->precip >= 0.1f) {
-      char buf[16];
-      snprintf(buf, sizeof(buf), "%.1f mm", h->precip);
-      it.print(cx, y + 128, f.small, INK, TextAlign::TOP_CENTER, buf);
+      snprintf(buf, sizeof(buf), "%.1f", h->precip);
+      it.print(cx, y + 148, f.small, INK, TextAlign::TOP_CENTER, buf);
+      anyRain = true;
     }
   }
+  if (anyWind)
+    it.print(RIGHT_X, y + 120, f.small, INK, TextAlign::TOP_LEFT, "m/s");
+  if (anyRain)
+    it.print(RIGHT_X, y + 148, f.small, INK, TextAlign::TOP_LEFT, "mm");
 }
 
 // ------------------------------------------------------------- guest wifi --
@@ -647,44 +714,49 @@ static std::string wifiField(const std::string &payload, char key) {
   return out;
 }
 
+// Same frame as the dashboard: the hero stays, the left column names the
+// network, the right column holds the code.
 static void drawGuest(Display &it, const Fonts &f, const Data &d) {
+  sectionLabel(it, f, LEFT_X, COL_Y, LEFT_W, "Guest Wi-Fi");
+  int y = COL_Y + LABEL_GAP + 4;
+  auto item = [&](const char *label, const std::string &value) {
+    it.print(LEFT_X, y, f.small, INK, TextAlign::TOP_LEFT, label);
+    it.print(LEFT_X, y + 28, f.date, INK, TextAlign::TOP_LEFT, ellipsize(it, f.date, value, LEFT_W).c_str());
+    y += 100;
+  };
+  item("Network", wifiField(d.qrPayload, 'S'));
+  std::string pass = wifiField(d.qrPayload, 'P');
+  if (!pass.empty())
+    item("Password", pass);
+  y += 12;
+  int hBody = lineHeight(it, f.body);
+  for (auto &l : wrap(it, f.body, "Point your phone camera at the code to join without typing.", LEFT_W, 3)) {
+    it.print(LEFT_X, y, f.body, INK, TextAlign::TOP_LEFT, l.c_str());
+    y += hBody + 4;
+  }
+
+  sectionLabel(it, f, RIGHT_X, COL_Y, RIGHT_W, "Scan to join");
   if (d.qr == nullptr)
     return;
   int size = d.qr->get_size();
-  int scale = size ? std::min(560 / size, 18) : 1;
+  if (size == 0)
+    return;
+  // A couple of modules of white between the hairline and the code.
+  int top = COL_Y + lineHeight(it, f.label) + 22;
+  int scale = std::min(RIGHT_W / size, (BOTTOM - top) / size);
   int qrPx = size * scale;
-  int qx = W - MX - qrPx - 20, qy = (H - qrPx) / 2;
-  it.qr_code(qx, qy, d.qr, INK, scale);
-
-  int x = MX + 20;
-  int maxW = qx - x - 40;
-  int y = 190;
-  it.print(x, y, f.iconXL, INK, TextAlign::TOP_LEFT, ICON_WIFI);
-  y += 130;
-  sectionLabel(it, f, x, y, maxW, "Guest Wi-Fi");
-  y += 50;
-  std::string ssid = wifiField(d.qrPayload, 'S');
-  std::string pass = wifiField(d.qrPayload, 'P');
-  it.print(x, y, f.small, INK, TextAlign::TOP_LEFT, "Network");
-  it.print(x, y + 30, f.date, INK, TextAlign::TOP_LEFT, ellipsize(it, f.date, ssid, maxW).c_str());
-  y += 100;
-  if (!pass.empty()) {
-    it.print(x, y, f.small, INK, TextAlign::TOP_LEFT, "Password");
-    it.print(x, y + 30, f.date, INK, TextAlign::TOP_LEFT, ellipsize(it, f.date, pass, maxW).c_str());
-    y += 100;
-  }
-  it.print(x, y + 10, f.body, INK, TextAlign::TOP_LEFT, "Scan the code with your phone camera");
+  it.qr_code(RIGHT_X + (RIGHT_W - qrPx) / 2, top, d.qr, INK, scale);
 }
 
 // ------------------------------------------------------------------- main --
 
 static void draw(Display &it, const Fonts &f, const Data &d) {
   it.fill(PAPER);
+  drawHero(it, f, d);
   if (d.guest) {
     drawGuest(it, f, d);
     return;
   }
-  drawHero(it, f, d);
   drawAgenda(it, f, d);
   drawDepartures(it, f, d);
   drawForecast(it, f, d);

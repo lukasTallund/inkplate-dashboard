@@ -10,7 +10,7 @@
 
 template:
   # Hourly forecast for the next ~30 hours; the device picks the slots.
-  # rows: epoch | condition | temperature | precipitation (mm)
+  # rows: epoch | condition | temperature | precipitation (mm) | wind (m/s)
   - triggers:
       - trigger: time_pattern
         minutes: /15
@@ -38,7 +38,8 @@ template:
                     as_timestamp(f.datetime) | int,
                     f.condition,
                     f.temperature,
-                    f.precipitation if f.precipitation is defined else ''
+                    f.precipitation if f.precipitation is defined else '',
+                    f.wind_speed if f.wind_speed is defined else ''
                   ] | join('|')] -%}
             {%- endfor -%}
             {{ ns.out | join('\n') }}
