@@ -6,8 +6,29 @@ from HASL and a guest Wi-Fi QR code. Nothing renders screenshots; the ESP32
 draws text and icons itself.
 
 The panel runs in 1-bit mode with partial updates, so the clock and departures
-change every minute without the whole screen flashing. A full refresh runs
-once an hour to clear ghosting.
+change every minute without the whole screen flashing. Partial updates leave
+faint ghosts, so every 15th redraw is a full refresh (a short flash; the
+interval is a number entity in HA), a deeper clean runs at 03:30, and the
+WAKE button on the board runs one on demand.
+
+## What it shows
+
+- **Clock and date.**
+- **Current weather** from SMHI: icon, condition, wind as `4 (8) m/s` (gusts
+  in brackets when they're notable), temperature and wind-chill "feels like".
+- **Calendar**: today and the next four days, empty days included, cut off
+  with "+N more" when the column is full.
+- **Hourly forecast** for the rest of the day (or tomorrow after 20:00): every
+  two hours, with wind and, when it rains, precipitation. The label shows the
+  low and high for the hours the table covers.
+- **Departures** from HASL. Lines listed in `highlight_lines` get a filled
+  badge, others an outline. A warning triangle and "TRAFFIC NOTICE" appear on
+  the stop label when a shown departure has an SL deviation, is cancelled or
+  runs 5+ minutes late.
+- **Guest Wi-Fi**: a HA button swaps the columns for the network, password and
+  a QR code for 5 minutes.
+- **Diagnostics** in HA: Wi-Fi signal, uptime, backup battery voltage and
+  charge, the WAKE button.
 
 ## Files
 
@@ -76,10 +97,15 @@ scenario there when you find a layout edge case.
 
 ## Changing things
 
-- Entities and the stop name: `substitutions` at the top of `dashboard.yaml`,
-  plus the entity IDs in `ha/inkplate_dashboard.yaml`.
+- Entities, the stop name and the highlighted bus lines: `substitutions` at
+  the top of `dashboard.yaml`, plus the entity IDs in
+  `ha/inkplate_dashboard.yaml`.
 - More calendars: add them to the `entity_id` list of the calendar trigger in
   the HA package.
-- Layout, sizes and texts: `dashboard.h`. Box positions are constants at the top.
-- New icons: add the code point to the right `icons_*` font in
-  `dashboard.yaml`. ESPHome only bundles the glyphs you list.
+- Layout, sizes and texts: `dashboard.h`. Positions are constants at the top.
+  Check changes with `preview/render.sh` before flashing.
+- Weather conditions: the `WEATHER` table in `dashboard.h`. A new icon must
+  also go in the `weather_glyphs` list in `dashboard.yaml`; ESPHome only
+  bundles the glyphs you list.
+- A new font: add it under `font:` and assign it to a `dash::Fonts` member in
+  the display lambda (`f.member = id(font_id);`). The preview picks both up.

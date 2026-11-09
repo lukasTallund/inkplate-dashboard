@@ -39,8 +39,14 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
 
 - Clean, modern look: white background, no boxes, small uppercase section
   labels with a hairline.
-- Data that matters for dressing for the commute: hourly forecast, today's
-  temperature range, wind and gusts. No wind direction.
+- Data that matters for dressing for the commute: hourly forecast with wind,
+  low–high for the hours shown, feels-like, wind and gusts as `4 (8) m/s`.
+  No wind direction.
+- Layout is like HA's weather card: weather icon lined up with the right
+  column, temperature right-aligned.
+- 1-bit text only: dithered anti-aliasing was tried and looked worse on the
+  panel. Greyscale mode would flash the whole screen every minute.
+- Iterate in the preview; flash and commit only once the user is happy.
 - Everything controllable from HA. Guest Wi-Fi only shows full-screen on a
   button press, for 5 min.
 - Full refresh interval is a HA number. The user chose 15 min.
