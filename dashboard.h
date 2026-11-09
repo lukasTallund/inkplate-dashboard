@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -508,7 +509,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
 
     // An empty day stays on its heading line instead of taking a row.
     if (todays.empty()) {
-      it.print(dateX + textWidth(it, f.small, date) + 28, y, f.body, INK, TextAlign::TOP_LEFT, "Nothing planned");
+      it.print(dateX + textWidth(it, f.small, date) + 16, y, f.body, INK, TextAlign::TOP_LEFT, "–  Nothing planned");
       y += hHead + 18;
       continue;
     }
@@ -661,8 +662,12 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
       continue;
     int hr = local(slot).tm_hour;
     it.print(cx, y + 26, f.iconL, INK, TextAlign::TOP_CENTER, weatherIcon(h->condition, hr < 6 || hr >= 20));
-    if (!std::isnan(h->temp))
-      it.print(cx, y + 84, f.heading, INK, TextAlign::TOP_CENTER, degrees(h->temp).c_str());
+    if (!std::isnan(h->temp)) {
+      // Centre the number and let the ° hang, so digits line up under the icon.
+      std::string t = degrees(h->temp);
+      int nw = textWidth(it, f.heading, t.substr(0, t.size() - strlen("°")));
+      it.print(cx - nw / 2, y + 84, f.heading, INK, TextAlign::TOP_LEFT, t.c_str());
+    }
     char buf[16];
     if (!std::isnan(h->wind)) {
       snprintf(buf, sizeof(buf), "%.0f", h->wind);
