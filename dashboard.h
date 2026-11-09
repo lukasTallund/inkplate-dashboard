@@ -490,9 +490,6 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
     for (auto &e : events)
       if (e.start < de && e.end > ds)
         todays.push_back(&e);
-    // An agenda only lists days with something on, except today.
-    if (todays.empty() && day > 0)
-      continue;
     if (full) {
       hidden += todays.size();
       continue;
@@ -509,7 +506,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
     int dateX = LEFT_X + textWidth(it, f.heading, title) + 12;
     it.print(dateX, y + 3, f.small, INK, TextAlign::TOP_LEFT, date.c_str());
 
-    // An empty today stays on its heading line instead of taking a row.
+    // An empty day stays on its heading line instead of taking a row.
     if (todays.empty()) {
       it.print(dateX + textWidth(it, f.small, date) + 28, y, f.body, INK, TextAlign::TOP_LEFT, "Nothing planned");
       y += hHead + 18;
