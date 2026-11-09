@@ -10,11 +10,10 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
   MCP23017. 8 MB PSRAM.
 - Wall powered and always on. Redraws every minute on the minute. A Li-ion
   battery may be fitted as backup only, so no deep sleep or power saving.
-- `inkplate-dashboard.local` = 192.168.20.46 on the IoT VLAN. HA is
-  192.168.1.23 and reaches the API on 6053.
-- Flash: `esphome run dashboard.yaml --device OTA`. OTA from the laptop on
-  192.168.10.x works. Over USB it shows up as CH340 on `/dev/ttyUSB0`, and the
-  port sometimes needs a retry.
+- Addresses, subnets and paths for this install are in `CLAUDE.local.md`
+  (gitignored). HA reaches the device's API on 6053.
+- Flash: `esphome run dashboard.yaml --device OTA`. Over USB it shows up as
+  CH340 on `/dev/ttyUSB0`, and the port sometimes needs a retry.
 - Preview: `preview/render.sh` runs the tests and renders every scenario to
   `preview/out/*.png`. `--check` compares with `preview/reference/`; a
   refactor must report every scenario unchanged. After an intended change,
@@ -34,10 +33,8 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
 - Fonts only contain the glyphs you list. A new MDI icon must be added to the
   right `icons_*` font, and characters must not repeat within one font's
   `glyphs`.
-- The HA package lives at `/homeassistant/config_split/inkplate_dashboard.yaml`,
-  loaded from `configuration.yaml` under `homeassistant: packages:`. After
-  editing `ha/inkplate_dashboard.yaml`, copy it there and reload template
-  entities.
+- After editing `ha/inkplate_dashboard.yaml`, copy it to HA's packages
+  directory (see `CLAUDE.local.md`) and reload template entities.
 
 ## User preferences
 

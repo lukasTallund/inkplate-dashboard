@@ -3,3 +3,4 @@ secrets.yaml
 __pycache__/
 preview/build/
 preview/out/
+CLAUDE.local.md

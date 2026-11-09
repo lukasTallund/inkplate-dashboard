@@ -120,3 +120,9 @@ scenario there when you find a layout edge case.
   bundles the glyphs you list.
 - A new font: add it under `font:` and assign it to a `dash::Fonts` member in
   the display lambda (`f.member = id(font_id);`). The preview picks both up.
+
+## License
+
+MIT, see `LICENSE`. The Roboto and Material Design Icons fonts are not part
+of this repository; ESPHome downloads them at build time, under their own
+licenses.

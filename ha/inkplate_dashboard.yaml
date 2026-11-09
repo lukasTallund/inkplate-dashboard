@@ -1,9 +1,10 @@
 # Home Assistant package: the data feeds for the Inkplate dashboard.
 #
 # Each sensor exposes a `rows` attribute: one record per line, fields
-# separated by "|". The device parses them in dash/model.h; change both
-# together (and the fakes in preview/scenarios.h). Keeping it as plain delimited text (not JSON) means HA
+# separated by "|". Keeping it as plain delimited text (not JSON) means HA
 # leaves it as a string and the ESP32 can split it without a JSON parser.
+# The device parses the records in dash/model.h; change both together (and
+# the fakes in preview/scenarios.h).
 #
 # Install: copy to <config>/packages/ and make sure configuration.yaml has
 #   homeassistant:
