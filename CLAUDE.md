@@ -15,8 +15,10 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
 - Flash: `esphome run dashboard.yaml --device OTA`. OTA from the laptop on
   192.168.10.x works. Over USB it shows up as CH340 on `/dev/ttyUSB0`, and the
   port sometimes needs a retry.
-- Preview: `preview/render.sh` renders every scenario to `preview/out/*.png`.
-  Check layout changes there before flashing.
+- Preview: `preview/render.sh` runs the tests and renders every scenario to
+  `preview/out/*.png`. `--check` compares with `preview/reference/`; a
+  refactor must report every scenario unchanged. After an intended change,
+  `--accept` and commit the references with it.
 - Logs: `esphome logs dashboard.yaml --device OTA`. Each redraw logs a
   `[dash]` line with the byte count of every data feed.
 
@@ -27,6 +29,8 @@ Inkplate 10 **v2**. Replaced the HomePlate + Puppet setup, which hung every
 - ESPHome 2026 no longer sets the libc TZ, so `localtime_r()` and `mktime()`
   run in UTC. Use `dash::local()` and `dash::dayStart()`, which go through
   `ESPTime::from_epoch_local`.
+- ESPHome `#include`s every header in `dash/` in no set order. Each file
+  must include what it uses; `render.sh` compiles each one on its own.
 - Fonts only contain the glyphs you list. A new MDI icon must be added to the
   right `icons_*` font, and characters must not repeat within one font's
   `glyphs`.

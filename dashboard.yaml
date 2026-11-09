@@ -1,6 +1,6 @@
 # Inkplate 10 (v2) Home Assistant dashboard, drawn natively — no screenshots.
 #
-# Layout and drawing live in dashboard.h. Data comes from three template
+# Layout and drawing live in dash/. Data comes from three template
 # sensors defined in ha/inkplate_dashboard.yaml plus the SMHI weather entity.
 
 substitutions:
@@ -19,8 +19,14 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  # dash/dates.h relies on 2026-era time handling (ESPTime, no libc TZ).
+  min_version: 2026.10.0
+  project:
+    name: lukastallund.inkplate-dashboard
+    version: "1.0.0"
+  # The drawing code (dash/dash.h explains the layout of the directory).
   includes:
-    - dashboard.h
+    - dash
   # Draw once at boot so the panel shows "waiting…" instead of whatever the
   # previous firmware left behind.
   on_boot:
@@ -31,6 +37,11 @@ esphome:
 
 esp32:
   board: esp32dev
+  framework:
+    advanced:
+      # This board's ESP32 is rev 3.1 (see the boot log). Saves ~10 KB IRAM;
+      # the firmware then refuses to run on older chips.
+      minimum_chip_revision: "3.1"
 
 psram:
 
@@ -356,7 +367,7 @@ sensor:
 
 # -------------------------------------------------------------------- fonts
 # Roboto from Google Fonts; GF_Latin_Core covers å/ä/ö, °, ·, – and …
-# Icons are Material Design Icons code points (see dashboard.h).
+# Icons are Material Design Icons code points (see dash/weather.h).
 
 font:
   - file: { type: gfonts, family: Roboto, weight: 700 }

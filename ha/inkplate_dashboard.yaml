@@ -1,7 +1,8 @@
 # Home Assistant package: the data feeds for the Inkplate dashboard.
 #
 # Each sensor exposes a `rows` attribute: one record per line, fields
-# separated by "|". Keeping it as plain delimited text (not JSON) means HA
+# separated by "|". The device parses them in dash/model.h; change both
+# together (and the fakes in preview/scenarios.h). Keeping it as plain delimited text (not JSON) means HA
 # leaves it as a string and the ESP32 can split it without a JSON parser.
 #
 # Install: copy to <config>/packages/ and make sure configuration.yaml has
@@ -9,7 +10,8 @@
 #     packages: !include_dir_named packages
 
 template:
-  # Hourly forecast for the next ~30 hours; the device picks the slots.
+  # Hourly forecast for the next ~30 hours; the device picks the slots. The
+  # weather entity is named only in the action below.
   # rows: epoch | condition | temperature | precipitation (mm) | wind (m/s)
   - triggers:
       - trigger: time_pattern
@@ -29,11 +31,11 @@ template:
       - name: Inkplate forecast
         unique_id: inkplate_forecast
         icon: mdi:weather-partly-cloudy
-        state: "{{ fc['weather.smhi_home'].forecast | count }}"
+        state: "{{ (fc.values() | first).forecast | count }}"
         attributes:
           rows: >-
             {%- set ns = namespace(out=[]) -%}
-            {%- for f in fc['weather.smhi_home'].forecast[:30] -%}
+            {%- for f in (fc.values() | first).forecast[:30] -%}
               {%- set ns.out = ns.out + [[
                     as_timestamp(f.datetime) | int,
                     f.condition,
@@ -90,7 +92,8 @@ template:
             {{ ns.out | sort | join('\n') }}
 
   # Departures from HASL. Updates whenever the HASL sensor does; the device
-  # computes "N min" itself every minute from the expected time.
+  # computes "N min" itself every minute from the expected time. Rename the
+  # HASL entity in both places below.
   # rows: line | destination | expected epoch | state | notice (1/0)
   # notice is 1 when SL attaches a deviation to the departure, it is
   # cancelled, or it runs 5+ minutes late; the device shows a quiet hint.

@@ -35,10 +35,10 @@ WAKE button on the board runs one on demand.
 | File | What it is |
 |---|---|
 | `dashboard.yaml` | ESPHome device config: hardware, data sources, fonts, HA buttons |
-| `dashboard.h` | Layout and drawing (C++) |
+| `dash/` | Layout and drawing (C++), one header per area; `dash/dash.h` has the map |
 | `ha/inkplate_dashboard.yaml` | HA package with the three template sensors the device reads |
 | `secrets.yaml` | Wi-Fi, API key, guest Wi-Fi QR. Gitignored; see `secrets.example.yaml` |
-| `preview/` | Renders `dashboard.h` to PNGs on your computer, no flashing needed |
+| `preview/` | Renders the dashboard to PNGs on your computer and runs the tests, no flashing needed |
 
 ## Data flow
 
@@ -77,22 +77,33 @@ HA connects *to* the device on TCP 6053, the ESPHome API. If the Inkplate is
 on an isolated IoT VLAN, allow HA to reach it on that port. OTA is TCP 3232
 from whichever machine is flashing, to the device.
 
-## Previewing without flashing
+## Previewing and testing without flashing
 
 ```sh
-preview/render.sh
+preview/render.sh            # tests, then render to preview/out/
+preview/render.sh --check    # ...and compare with preview/reference/
+preview/render.sh --accept   # make the current render the new reference
 ```
 
-This compiles `dashboard.h` natively against a small stand-in for ESPHome's
-display and font code and writes one PNG per scenario to `preview/out/`
-(`photo`, `busy`, `evening`, `guest`). Fonts, sizes and glyph lists are read
+This compiles `dash/` natively against a small stand-in for ESPHome's display
+and font code. Fonts, sizes, glyph lists and which font goes where are read
 from `dashboard.yaml`, and text is measured and placed the way ESPHome does
-it, so the result matches the panel closely. A glyph a font doesn't include
-is drawn as a box and reported as a warning.
+it, so the PNGs match the panel closely. A glyph a font doesn't include is
+drawn as a box and reported as a warning.
+
+Before rendering it checks that each header in `dash/` compiles on its own
+(ESPHome includes them in no set order) and runs `preview/tests.cpp`: day
+arithmetic across DST, the forecast window and range, wind chill, parsing of
+the HA records and the Wi-Fi payload, and text wrapping.
+
+`--check` is the safety net for refactoring: it reports each scenario as
+unchanged or changed, and writes `preview/out/<name>.diff.png` with the
+changed pixels in black. After an intended layout change, look at the diffs,
+then run `--accept` and commit the new references with the change.
 
 It needs `g++`, FreeType and libpng headers, and one earlier
 `esphome compile dashboard.yaml`, which downloads the fonts and the QR
-library into `.esphome/`. The canned data lives in `preview/main.cpp`; add a
+library into `.esphome/`. The canned data lives in `preview/scenarios.h`; add a
 scenario there when you find a layout edge case.
 
 ## Changing things
@@ -102,9 +113,9 @@ scenario there when you find a layout edge case.
   `ha/inkplate_dashboard.yaml`.
 - More calendars: add them to the `entity_id` list of the calendar trigger in
   the HA package.
-- Layout, sizes and texts: `dashboard.h`. Positions are constants at the top.
+- Layout, sizes and texts: `dash/`. Positions are constants in `dash/layout.h`.
   Check changes with `preview/render.sh` before flashing.
-- Weather conditions: the `WEATHER` table in `dashboard.h`. A new icon must
+- Weather conditions: the `WEATHER` table in `dash/weather.h`. A new icon must
   also go in the `weather_glyphs` list in `dashboard.yaml`; ESPHome only
   bundles the glyphs you list.
 - A new font: add it under `font:` and assign it to a `dash::Fonts` member in

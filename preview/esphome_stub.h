@@ -1,5 +1,5 @@
 #pragma once
-// Just enough of ESPHome for dashboard.h to compile and draw on a PC.
+// Just enough of ESPHome for the dash/ code to compile and draw on a PC.
 //
 // Text metrics and placement copy ESPHome's font component: FreeType at the
 // font's pixel size, 1-bit glyphs, ascender as the top line, and the same
