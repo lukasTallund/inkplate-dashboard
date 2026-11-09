@@ -12,6 +12,7 @@
 // screen keeps the hero and swaps the columns for the network and QR code.
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -116,6 +117,48 @@ static int textWidth(Display &it, BaseFont *font, const std::string &s) {
   int x, y, w, h;
   it.get_text_bounds(0, 0, s.c_str(), font, TextAlign::TOP_LEFT, &x, &y, &w, &h);
   return w;
+}
+
+// Ink extent of `s`, relative to where print() puts the pen with TOP_LEFT.
+// Display's own centring uses advance widths, which leaves a digit like "1"
+// (lots of room on its left) or a lopsided icon visibly off centre.
+struct Ink {
+  int left, right, top, bottom;
+};
+
+static Ink ink(BaseFont *font, const std::string &s) {
+  auto *ft = static_cast<esphome::font::Font *>(font);
+  Ink r{INT_MAX, INT_MIN, INT_MAX, INT_MIN};
+  int x = 0;
+  const unsigned char *p = (const unsigned char *) s.c_str();
+  while (*p) {
+    uint32_t c = *p;
+    int n = c < 0x80 ? 0 : c < 0xE0 ? 1 : c < 0xF0 ? 2 : 3;
+    c &= n == 0 ? 0x7F : n == 1 ? 0x1F : n == 2 ? 0x0F : 0x07;
+    p++;
+    for (int i = 0; i < n && (*p & 0xC0) == 0x80; i++, p++)
+      c = (c << 6) | (*p & 0x3F);
+    const auto *g = ft->find_glyph(c);
+    if (g == nullptr)
+      continue;
+    if (g->width > 0 && g->height > 0) {
+      r.left = std::min(r.left, x + g->offset_x);
+      r.right = std::max(r.right, x + g->offset_x + g->width);
+      r.top = std::min(r.top, g->offset_y);
+      r.bottom = std::max(r.bottom, g->offset_y + g->height);
+    }
+    x += g->advance;
+  }
+  if (r.left > r.right)
+    return {0, 0, 0, 0};
+  return r;
+}
+
+// Print `s` with the ink of `centreOn` (default: all of `s`) centred on cx.
+static void printInkCentred(Display &it, BaseFont *font, int cx, int y, const std::string &s,
+                            const std::string &centreOn = "") {
+  Ink k = ink(font, centreOn.empty() ? s : centreOn);
+  it.print(cx - (k.left + k.right) / 2, y, font, INK, TextAlign::TOP_LEFT, s.c_str());
 }
 
 static int lineHeight(Display &it, BaseFont *font) {
@@ -677,26 +720,29 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
         break;
       }
     int cx = colX + colW * i + colW / 2;
-    it.print(cx, y, f.small, INK, TextAlign::TOP_CENTER, fmt(slot, "%H").c_str());
+    // Everything in a column is centred on its ink, not its advance width.
+    printInkCentred(it, f.small, cx, y, fmt(slot, "%H"));
     if (h == nullptr)
       continue;
     int hr = local(slot).tm_hour;
-    it.print(cx, y + 26, f.iconL, INK, TextAlign::TOP_CENTER, weatherIcon(h->condition, hr < 6 || hr >= 20));
+    // Icons also share a vertical centre line, whatever their shape.
+    std::string icon = weatherIcon(h->condition, hr < 6 || hr >= 20);
+    Ink k = ink(f.iconL, icon);
+    printInkCentred(it, f.iconL, cx, y + 54 - (k.top + k.bottom) / 2, icon);
     if (!std::isnan(h->temp)) {
-      // Centre the number and let the ° hang, so digits line up under the icon.
+      // Centre the number and let the ° hang.
       std::string t = degrees(h->temp);
-      int nw = textWidth(it, f.heading, t.substr(0, t.size() - strlen("°")));
-      it.print(cx - nw / 2, y + 84, f.heading, INK, TextAlign::TOP_LEFT, t.c_str());
+      printInkCentred(it, f.heading, cx, y + 84, t, t.substr(0, t.size() - strlen("°")));
     }
     char buf[16];
     if (!std::isnan(h->wind)) {
       snprintf(buf, sizeof(buf), "%.0f", h->wind);
-      it.print(cx, y + 120, f.small, INK, TextAlign::TOP_CENTER, buf);
+      printInkCentred(it, f.small, cx, y + 120, buf);
       anyWind = true;
     }
     if (h->precip >= 0.1f) {
       snprintf(buf, sizeof(buf), "%.1f", h->precip);
-      it.print(cx, y + 148, f.small, INK, TextAlign::TOP_CENTER, buf);
+      printInkCentred(it, f.small, cx, y + 148, buf);
       anyRain = true;
     }
   }

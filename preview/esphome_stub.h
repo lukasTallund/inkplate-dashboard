@@ -140,6 +140,7 @@ class BaseFont {
   }
 
   void print(int x, int y, Display *d, Color color, const char *s);
+  const Glyph *find_glyph(uint32_t c) { return glyph(c); }
 
   std::vector<uint32_t> missing; // code points asked for but not in the font
 
@@ -184,6 +185,10 @@ class BaseFont {
 };
 
 }  // namespace display
+
+namespace font {
+using Font = display::BaseFont;
+}
 
 namespace qr_code {
 class QrCode {
