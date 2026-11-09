@@ -8,6 +8,9 @@ substitutions:
   friendly_name: Inkplate Dashboard
   weather_entity: weather.smhi_home
   stop_name: Rotvik
+  # Lines drawn as filled black badges; others get an outline. Comma
+  # separated, no spaces.
+  highlight_lines: "875,804,805"
   # "WIFI:T:WPA;S:name;P:password;;" — also parsed for the text on the guest
   # screen. Must not contain a double quote (it is pasted into C++).
   guest_wifi_qr: !secret guest_wifi_qr
@@ -102,6 +105,7 @@ display:
       d.departures = id(departure_rows).state;
       d.events = id(calendar_rows).state;
       d.stopName = "${stop_name}";
+      d.highlightLines = "${highlight_lines}";
       d.guest = id(guest_mode);
       d.qr = id(guest_wifi_qr_code);
       d.qrPayload = "${guest_wifi_qr}";

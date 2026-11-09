@@ -63,7 +63,8 @@ static std::string event(time_t s, time_t e, bool allDay, const std::string &sum
 }
 
 static std::string bus(const char *line, const char *dest, time_t when, const char *state = "EXPECTED") {
-  return std::string(line) + "|" + dest + "|" + num(when) + "|" + state + "\n";
+  bool notice = std::string(state) == "CANCELLED";
+  return std::string(line) + "|" + dest + "|" + num(when) + "|" + state + "|" + (notice ? "1" : "0") + "\n";
 }
 
 struct Scenario {
@@ -182,6 +183,7 @@ int main(int argc, char **argv) {
     dash::Data d;
     sc.fill(d);
     d.stopName = "Rotvik";
+    d.highlightLines = "875,804,805";
     d.qr = &qr;
     d.qrPayload = QR;
     display::Display it(dash::W, dash::H);

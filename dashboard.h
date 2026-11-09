@@ -78,6 +78,7 @@ struct Data {
   float temperature = NAN, windSpeed = NAN, windGust = NAN;
   std::string forecast, departures, events;
   std::string stopName;
+  std::string highlightLines; // comma-separated lines drawn as filled badges
   // Guest Wi-Fi screen
   bool guest = false;
   esphome::qr_code::QrCode *qr = nullptr;
@@ -560,24 +561,43 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
 // ------------------------------------------------------------- departures --
 
 static void drawDepartures(Display &it, const Fonts &f, const Data &d) {
-  sectionLabel(it, f, RIGHT_X, BUS_Y, RIGHT_W, d.stopName);
+  // The rows worth showing: not yet left, at most BUS_ROWS.
+  std::vector<std::vector<std::string>> rows;
+  for (auto &r : records(d.departures, 3)) {
+    time_t when = (time_t) atoll(r[2].c_str());
+    if (d.now && when < d.now - 30) // still listed until it has left
+      continue;
+    if ((int) rows.size() == BUS_ROWS)
+      break;
+    rows.push_back(r);
+  }
+  // HA flags a departure that has an SL deviation, is cancelled or runs
+  // late. One flag is enough for a quiet hint to check the SL app.
+  bool notice = false;
+  for (auto &r : rows)
+    notice |= r.size() > 4 && r[4] == "1";
+  sectionLabel(it, f, RIGHT_X, BUS_Y, RIGHT_W, d.stopName, notice ? "TRAFFIC NOTICE" : "");
+
   int right = RIGHT_X + RIGHT_W;
   int y = BUS_Y + LABEL_GAP + 8;
   int shown = 0;
 
-  for (auto &r : records(d.departures, 3)) {
-    if (shown >= BUS_ROWS)
-      break;
+  for (auto &r : rows) {
     time_t when = (time_t) atoll(r[2].c_str());
-    if (d.now && when < d.now - 30) // still listed until it has left
-      continue;
     bool cancelled = r.size() > 3 && r[3] == "CANCELLED";
     int cy = y + 22; // row centre line
 
-    // Line number: white on a black rounded badge.
-    const int badgeW = 70, badgeH = 44;
+    // Line number on a rounded badge: white on black for the lines that
+    // matter most, black in an outline for the rest.
+    const int badgeW = 70, badgeH = 44, stroke = 3;
+    bool filled = false;
+    for (auto &l : split(d.highlightLines, ','))
+      filled |= !l.empty() && l == r[0];
     fillRound(it, RIGHT_X, cy - badgeH / 2, badgeW, badgeH, 10, INK);
-    it.print(RIGHT_X + badgeW / 2, cy + 1, f.heading, PAPER, TextAlign::CENTER, r[0].c_str());
+    if (!filled)
+      fillRound(it, RIGHT_X + stroke, cy - badgeH / 2 + stroke, badgeW - 2 * stroke, badgeH - 2 * stroke,
+                10 - stroke, PAPER);
+    it.print(RIGHT_X + badgeW / 2, cy + 1, f.heading, filled ? PAPER : INK, TextAlign::CENTER, r[0].c_str());
 
     // ETA: big number with a small unit, or a clock time an hour+ out.
     int etaW;

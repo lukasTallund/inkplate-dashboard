@@ -91,7 +91,9 @@ template:
 
   # Departures from HASL. Updates whenever the HASL sensor does; the device
   # computes "N min" itself every minute from the expected time.
-  # rows: line | destination | expected epoch | state
+  # rows: line | destination | expected epoch | state | notice (1/0)
+  # notice is 1 when SL attaches a deviation to the departure, it is
+  # cancelled, or it runs 5+ minutes late; the device shows a quiet hint.
   - sensor:
       - name: Inkplate departures
         unique_id: inkplate_departures
@@ -101,11 +103,17 @@ template:
           rows: >-
             {%- set ns = namespace(out=[]) -%}
             {%- for d in (state_attr('sensor.rotvik_departures', 'departures') or [])[:8] -%}
+              {%- set late = d.expected is defined and d.scheduled is defined
+                    and d.expected and d.scheduled
+                    and as_timestamp(d.expected) - as_timestamp(d.scheduled) >= 300 -%}
+              {%- set notice = (d.deviations is defined and d.deviations | default([], true) | count > 0)
+                    or d.state == 'CANCELLED' or late -%}
               {%- set ns.out = ns.out + [[
                     d.line.designation,
                     d.destination | replace('|', '/'),
                     as_timestamp(d.expected or d.scheduled) | int,
-                    d.state
+                    d.state,
+                    1 if notice else 0
                   ] | join('|')] -%}
             {%- endfor -%}
             {{ ns.out | join('\n') }}
