@@ -1,0 +1,110 @@
+# Home Assistant package: the data feeds for the Inkplate dashboard.
+#
+# Each sensor exposes a `rows` attribute: one record per line, fields
+# separated by "|". Keeping it as plain delimited text (not JSON) means HA
+# leaves it as a string and the ESP32 can split it without a JSON parser.
+#
+# Install: copy to <config>/packages/ and make sure configuration.yaml has
+#   homeassistant:
+#     packages: !include_dir_named packages
+
+template:
+  # Hourly forecast for the next ~30 hours; the device picks the slots.
+  # rows: epoch | condition | temperature | precipitation (mm)
+  - triggers:
+      - trigger: time_pattern
+        minutes: /15
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.smhi_home
+        data:
+          type: hourly
+        response_variable: fc
+    sensor:
+      - name: Inkplate forecast
+        unique_id: inkplate_forecast
+        icon: mdi:weather-partly-cloudy
+        state: "{{ fc['weather.smhi_home'].forecast | count }}"
+        attributes:
+          rows: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for f in fc['weather.smhi_home'].forecast[:30] -%}
+              {%- set ns.out = ns.out + [[
+                    as_timestamp(f.datetime) | int,
+                    f.condition,
+                    f.temperature,
+                    f.precipitation if f.precipitation is defined else ''
+                  ] | join('|')] -%}
+            {%- endfor -%}
+            {{ ns.out | join('\n') }}
+
+  # Calendar: today and the next four days. Add more calendars to the
+  # entity_id list; their events are merged and sorted.
+  # rows: start epoch | end epoch | all-day (1/0) | summary | location
+  - triggers:
+      - trigger: time_pattern
+        minutes: /10
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+    actions:
+      - action: calendar.get_events
+        target:
+          entity_id:
+            - calendar.vicas
+        data:
+          start_date_time: "{{ today_at('00:00') }}"
+          duration:
+            days: 5
+        response_variable: cal
+    sensor:
+      - name: Inkplate calendar
+        unique_id: inkplate_calendar
+        icon: mdi:calendar
+        state: "{{ cal.values() | map(attribute='events') | map('count') | sum }}"
+        attributes:
+          rows: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for c in cal.values() -%}
+              {%- for e in c.events -%}
+                {%- set all_day = 'T' not in e.start -%}
+                {%- set start = e.start ~ 'T00:00:00' if all_day else e.start -%}
+                {%- set end = e.end ~ 'T00:00:00' if all_day else e.end -%}
+                {%- set ns.out = ns.out + [[
+                      as_timestamp(start) | int,
+                      as_timestamp(end) | int,
+                      1 if all_day else 0,
+                      (e.summary or '') | replace('|', '/') | replace('\n', ' '),
+                      (e.location or '') | replace('|', '/') | replace('\n', ' ')
+                    ] | join('|')] -%}
+              {%- endfor -%}
+            {%- endfor -%}
+            {#- Epochs are all 10 digits, so a string sort is chronological. -#}
+            {{ ns.out | sort | join('\n') }}
+
+  # Departures from HASL. Updates whenever the HASL sensor does; the device
+  # computes "N min" itself every minute from the expected time.
+  # rows: line | destination | expected epoch | state
+  - sensor:
+      - name: Inkplate departures
+        unique_id: inkplate_departures
+        icon: mdi:bus-clock
+        state: "{{ state_attr('sensor.rotvik_departures', 'departures') | default([], true) | count }}"
+        attributes:
+          rows: >-
+            {%- set ns = namespace(out=[]) -%}
+            {%- for d in (state_attr('sensor.rotvik_departures', 'departures') or [])[:8] -%}
+              {%- set ns.out = ns.out + [[
+                    d.line.designation,
+                    d.destination | replace('|', '/'),
+                    as_timestamp(d.expected or d.scheduled) | int,
+                    d.state
+                  ] | join('|')] -%}
+            {%- endfor -%}
+            {{ ns.out | join('\n') }}

@@ -1,0 +1,361 @@
+# Inkplate 10 (v2) Home Assistant dashboard, drawn natively — no screenshots.
+#
+# Layout and drawing live in dashboard.h. Data comes from three template
+# sensors defined in ha/inkplate_dashboard.yaml plus the SMHI weather entity.
+
+substitutions:
+  name: inkplate-dashboard
+  friendly_name: Inkplate Dashboard
+  weather_entity: weather.smhi_home
+  stop_name: Rotvik
+  # "WIFI:T:WPA;S:name;P:password;;" — also parsed for the text on the guest
+  # screen. Must not contain a double quote (it is pasted into C++).
+  guest_wifi_qr: !secret guest_wifi_qr
+  guest_minutes: "5"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  includes:
+    - dashboard.h
+  # Draw once at boot so the panel shows "waiting…" instead of whatever the
+  # previous firmware left behind.
+  on_boot:
+    priority: -100
+    then:
+      - lambda: "id(epaper).set_full_update_every((uint32_t) id(full_refresh_every).state);"
+      - component.update: epaper
+
+esp32:
+  board: esp32dev
+
+psram:
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    # Same Noise key as the API; HA's ESPHome add-on uses it for OTA too.
+    encryption:
+      key: !secret api_encryption_key
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: ${friendly_name} Fallback
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# ------------------------------------------------------------------ hardware
+
+i2c:
+  sda: 21
+  scl: 22
+
+# Inkplate 10 v2 uses a PCAL6416A IO expander (the v1 board had an MCP23017).
+pca6416a:
+  - id: io_int
+    address: 0x20
+
+display:
+  - platform: inkplate
+    id: epaper
+    model: inkplate_10
+    # 1-bit mode is what allows partial updates: the clock and departures
+    # change every minute without flashing the whole panel. Partial updates
+    # leave faint ghosts, so every 15th refresh is a full one (a short
+    # flash), switching screens runs a clean cycle, and so does 03:30.
+    greyscale: false
+    partial_updating: true
+    full_update_every: 15
+    # Redrawn from the time trigger below, exactly on the minute.
+    update_interval: never
+    ckv_pin: 32
+    sph_pin: 33
+    gmod_pin: { pca6416a: io_int, number: 1 }
+    gpio0_enable_pin: { pca6416a: io_int, number: 8 }
+    oe_pin: { pca6416a: io_int, number: 0 }
+    spv_pin: { pca6416a: io_int, number: 2 }
+    powerup_pin: { pca6416a: io_int, number: 4 }
+    wakeup_pin: { pca6416a: io_int, number: 3 }
+    vcom_pin: { pca6416a: io_int, number: 5 }
+    lambda: |-
+      dash::Fonts f{
+        id(font_clock), id(font_temp), id(font_date), id(font_date_light),
+        id(font_label), id(font_heading), id(font_body), id(font_small),
+        id(font_eta), id(icons_xl), id(icons_l),
+      };
+      dash::Data d;
+      auto now = id(ha_time).now();
+      if (now.is_valid()) d.now = now.timestamp;
+      d.condition = id(weather_condition).state;
+      d.temperature = id(weather_temperature).state;
+      d.windSpeed = id(weather_wind_speed).state;
+      d.windGust = id(weather_wind_gust).state;
+      d.forecast = id(forecast_rows).state;
+      d.departures = id(departure_rows).state;
+      d.events = id(calendar_rows).state;
+      d.stopName = "${stop_name}";
+      d.guest = id(guest_mode);
+      d.qr = id(guest_wifi_qr_code);
+      d.qrPayload = "${guest_wifi_qr}";
+      ESP_LOGD("dash", "draw: guest=%d time=%s cond='%s' temp=%.1f forecast=%u departures=%u events=%u bytes",
+               d.guest, d.now ? "ok" : "none", d.condition.c_str(), d.temperature,
+               (unsigned) d.forecast.size(), (unsigned) d.departures.size(), (unsigned) d.events.size());
+      dash::draw(it, f, d);
+
+qr_code:
+  - id: guest_wifi_qr_code
+    value: ${guest_wifi_qr}
+    ecc: LOW
+
+# ------------------------------------------------------------ guest screen
+
+globals:
+  - id: guest_mode
+    type: bool
+    initial_value: "false"
+
+script:
+  # Flash the panel black/white a few times to wipe ghosting, then redraw
+  # with a full (non-partial) refresh. Takes a few seconds.
+  - id: deep_clean
+    mode: single
+    then:
+      - lambda: |-
+          id(epaper).clean();
+          id(epaper).block_partial();
+      - component.update: epaper
+
+  # Full-screen guest Wi-Fi for a few minutes, then back to the dashboard.
+  # Pressing the button again restarts the timer.
+  - id: show_guest_wifi
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: "return !id(guest_mode);"
+          then:
+            - globals.set: { id: guest_mode, value: "true" }
+            - script.execute: deep_clean
+      - delay: ${guest_minutes}min
+      - script.execute: hide_guest_wifi
+
+  - id: hide_guest_wifi
+    mode: single
+    then:
+      - script.stop: show_guest_wifi
+      - if:
+          condition:
+            lambda: "return id(guest_mode);"
+          then:
+            - globals.set: { id: guest_mode, value: "false" }
+            # The QR code's large black areas ghost badly; clean them off.
+            - script.execute: deep_clean
+
+number:
+  # How often a minute redraw is a full refresh (short flash, no ghosting)
+  # instead of a partial one. 1 = every minute.
+  - platform: template
+    id: full_refresh_every
+    name: Full refresh every
+    icon: mdi:refresh-auto
+    entity_category: config
+    unit_of_measurement: min
+    min_value: 1
+    max_value: 60
+    step: 1
+    initial_value: 15
+    restore_value: true
+    optimistic: true
+    on_value:
+      - lambda: "id(epaper).set_full_update_every((uint32_t) x);"
+
+button:
+  - platform: template
+    name: Show guest Wi-Fi
+    icon: mdi:qrcode
+    on_press:
+      - script.execute: show_guest_wifi
+  - platform: template
+    name: Back to dashboard
+    icon: mdi:view-dashboard
+    on_press:
+      - script.execute: hide_guest_wifi
+  - platform: template
+    name: Redraw
+    icon: mdi:refresh
+    entity_category: diagnostic
+    on_press:
+      - component.update: epaper
+  - platform: template
+    name: Deep clean
+    icon: mdi:broom
+    entity_category: diagnostic
+    on_press:
+      - script.execute: deep_clean
+  - platform: restart
+    name: Restart
+    entity_category: diagnostic
+
+# --------------------------------------------------------------------- data
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      then:
+        - component.update: epaper
+    on_time:
+      - seconds: 0
+        then:
+          - component.update: epaper
+      # Nightly ghost wipe, off the minute so it doesn't race the redraw.
+      - hours: 3
+        minutes: 30
+        seconds: 20
+        then:
+          - script.execute: deep_clean
+
+text_sensor:
+  - platform: homeassistant
+    id: weather_condition
+    entity_id: ${weather_entity}
+    internal: true
+  - platform: homeassistant
+    id: forecast_rows
+    entity_id: sensor.inkplate_forecast
+    attribute: rows
+    internal: true
+  - platform: homeassistant
+    id: departure_rows
+    entity_id: sensor.inkplate_departures
+    attribute: rows
+    internal: true
+  - platform: homeassistant
+    id: calendar_rows
+    entity_id: sensor.inkplate_calendar
+    attribute: rows
+    internal: true
+
+sensor:
+  - platform: homeassistant
+    id: weather_temperature
+    entity_id: ${weather_entity}
+    attribute: temperature
+    internal: true
+  - platform: homeassistant
+    id: weather_wind_speed
+    entity_id: ${weather_entity}
+    attribute: wind_speed
+    internal: true
+  - platform: homeassistant
+    id: weather_wind_gust
+    entity_id: ${weather_entity}
+    attribute: wind_gust_speed
+    internal: true
+
+  # Diagnostics in HA.
+  - platform: wifi_signal
+    name: WiFi Signal
+    update_interval: 60s
+  - platform: uptime
+    name: Uptime
+
+# -------------------------------------------------------------------- fonts
+# Roboto from Google Fonts; GF_Latin_Core covers å/ä/ö, °, ·, – and …
+# Icons are Material Design Icons code points (see dashboard.h).
+
+font:
+  - file: { type: gfonts, family: Roboto, weight: 700 }
+    id: font_clock
+    size: 150
+    glyphs: "0123456789:-"
+  - file: { type: gfonts, family: Roboto, weight: 300 }
+    id: font_temp
+    size: 84
+    glyphs: "0123456789.,-°"
+  - file: { type: gfonts, family: Roboto, weight: 700 }
+    id: font_date
+    size: 36
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true # only unused combining accents
+  - file: { type: gfonts, family: Roboto, weight: 300 }
+    id: font_date_light
+    size: 36
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: { type: gfonts, family: Roboto, weight: 700 }
+    id: font_label
+    size: 19
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: { type: gfonts, family: Roboto, weight: 700 }
+    id: font_heading
+    size: 28
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: { type: gfonts, family: Roboto, weight: 400 }
+    id: font_body
+    size: 28
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: { type: gfonts, family: Roboto, weight: 400 }
+    id: font_small
+    size: 22
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: { type: gfonts, family: Roboto, weight: 700 }
+    id: font_eta
+    size: 40
+    glyphs: "0123456789:Now"
+
+  - file: &mdi
+      type: web
+      url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
+    id: icons_xl
+    size: 120
+    glyphs:
+      - "\U000F0599" # weather-sunny
+      - "\U000F0594" # weather-night
+      - "\U000F0595" # weather-partly-cloudy
+      - "\U000F0F31" # weather-night-partly-cloudy
+      - "\U000F0590" # weather-cloudy
+      - "\U000F0591" # weather-fog
+      - "\U000F0592" # weather-hail
+      - "\U000F0593" # weather-lightning
+      - "\U000F067E" # weather-lightning-rainy
+      - "\U000F0596" # weather-pouring
+      - "\U000F0597" # weather-rainy
+      - "\U000F0598" # weather-snowy
+      - "\U000F067F" # weather-snowy-rainy
+      - "\U000F059D" # weather-windy
+      - "\U000F059E" # weather-windy-variant
+      - "\U000F0F2F" # weather-cloudy-alert
+      - "\U000F05A9" # wifi (guest screen)
+  - file: *mdi
+    id: icons_l
+    size: 56
+    glyphs:
+      - "\U000F0599"
+      - "\U000F0594"
+      - "\U000F0595"
+      - "\U000F0F31"
+      - "\U000F0590"
+      - "\U000F0591"
+      - "\U000F0592"
+      - "\U000F0593"
+      - "\U000F067E"
+      - "\U000F0596"
+      - "\U000F0597"
+      - "\U000F0598"
+      - "\U000F067F"
+      - "\U000F059D"
+      - "\U000F059E"
+      - "\U000F0F2F"
