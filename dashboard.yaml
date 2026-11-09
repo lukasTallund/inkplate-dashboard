@@ -10,7 +10,7 @@ substitutions:
   stop_name: Rotvik
   # Lines drawn as filled black badges; others get an outline. Comma
   # separated, no spaces.
-  highlight_lines: "875,804,805"
+  highlight_lines: "875,804,805,815C"
   # "WIFI:T:WPA;S:name;P:password;;" — also parsed for the text on the guest
   # screen. Must not contain a double quote (it is pasted into C++).
   guest_wifi_qr: !secret guest_wifi_qr
@@ -89,11 +89,20 @@ display:
     wakeup_pin: { pca6416a: io_int, number: 3 }
     vcom_pin: { pca6416a: io_int, number: 5 }
     lambda: |-
-      dash::Fonts f{
-        id(font_clock), id(font_temp), id(font_date), id(font_date_light),
-        id(font_label), id(font_heading), id(font_body), id(font_small),
-        id(font_eta), id(icons_xl), id(icons_l),
-      };
+      dash::Fonts f;
+      f.clock = id(font_clock);
+      f.temp = id(font_temp);
+      f.tempNeg = id(font_temp_negative);
+      f.date = id(font_date);
+      f.dateLight = id(font_date_light);
+      f.label = id(font_label);
+      f.heading = id(font_heading);
+      f.body = id(font_body);
+      f.small = id(font_small);
+      f.eta = id(font_eta);
+      f.iconXL = id(icons_xl);
+      f.iconL = id(icons_l);
+      f.iconS = id(icons_s);
       dash::Data d;
       auto now = id(ha_time).now();
       if (now.is_valid()) d.now = now.timestamp;
@@ -188,6 +197,22 @@ switch:
     internal: true
     restore_mode: ALWAYS_OFF
     pin: { pca6416a: io_int, number: 9 }
+
+binary_sensor:
+  # The WAKE button on the board (GPIO36, pulled up on the board, low when
+  # pressed). A press wipes the ghosting with a full refresh. The other
+  # button is RESET, which restarts the ESP32.
+  - platform: gpio
+    id: wake_button
+    name: Wake button
+    entity_category: diagnostic
+    pin:
+      number: 36
+      inverted: true
+    filters:
+      - delayed_on: 30ms
+    on_press:
+      - script.execute: deep_clean
 
 button:
   - platform: template
@@ -342,6 +367,12 @@ font:
     id: font_temp
     size: 84
     glyphs: "0123456789.,-°"
+  # Below zero the minus makes the temperature wide; this keeps room for
+  # the condition beside it.
+  - file: { type: gfonts, family: Roboto, weight: 300 }
+    id: font_temp_negative
+    size: 64
+    glyphs: "0123456789.,-°"
   - file: { type: gfonts, family: Roboto, weight: 700 }
     id: font_date
     size: 36
@@ -381,8 +412,9 @@ font:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
     id: icons_xl
-    size: 88
-    glyphs:
+    size: 120
+    # Every icon in dash::WEATHER plus ICON_UNKNOWN. icons_l reuses the list.
+    glyphs: &weather_glyphs
       - "\U000F0599" # weather-sunny
       - "\U000F0594" # weather-night
       - "\U000F0595" # weather-partly-cloudy
@@ -402,20 +434,9 @@ font:
   - file: *mdi
     id: icons_l
     size: 56
+    glyphs: *weather_glyphs
+  - file: *mdi
+    id: icons_s
+    size: 26
     glyphs:
-      - "\U000F0599"
-      - "\U000F0594"
-      - "\U000F0595"
-      - "\U000F0F31"
-      - "\U000F0590"
-      - "\U000F0591"
-      - "\U000F0592"
-      - "\U000F0593"
-      - "\U000F067E"
-      - "\U000F0596"
-      - "\U000F0597"
-      - "\U000F0598"
-      - "\U000F067F"
-      - "\U000F059D"
-      - "\U000F059E"
-      - "\U000F0F2F"
+      - "\U000F0026" # alert (traffic notice)

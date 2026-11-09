@@ -57,20 +57,27 @@ static const int BUS_ROWS = 4;
 static const int BUS_ROW_H = 62;
 static const int CAL_DAYS = 5;
 
+// Material Design Icons code points not covered by the weather table.
+#define ICON_ALERT "\U000F0026"   // icons_s
+#define ICON_UNKNOWN "\U000F0F2F" // weather-cloudy-alert, icons_xl/icons_l
+
 // ------------------------------------------------------------- data types --
 
+// Assigned member by member in the display lambda of dashboard.yaml.
 struct Fonts {
-  BaseFont *clock;     // hero time, digits only
-  BaseFont *temp;      // hero temperature
-  BaseFont *date;      // hero date, bold
-  BaseFont *dateLight; // hero date, regular
-  BaseFont *label;     // uppercase section labels
-  BaseFont *heading;   // bold body
-  BaseFont *body;      // regular body
-  BaseFont *small;     // secondary text
-  BaseFont *eta;       // departure minutes
-  BaseFont *iconXL;    // hero weather icon
-  BaseFont *iconL;     // forecast icons
+  BaseFont *clock = nullptr;     // hero time, digits only
+  BaseFont *temp = nullptr;      // hero temperature
+  BaseFont *tempNeg = nullptr;   // hero temperature below zero (the minus makes it wide)
+  BaseFont *date = nullptr;      // hero date, bold
+  BaseFont *dateLight = nullptr; // hero date, regular
+  BaseFont *label = nullptr;     // uppercase section labels
+  BaseFont *heading = nullptr;   // bold body
+  BaseFont *body = nullptr;      // regular body
+  BaseFont *small = nullptr;     // secondary text
+  BaseFont *eta = nullptr;       // departure minutes
+  BaseFont *iconXL = nullptr;    // hero weather icon
+  BaseFont *iconL = nullptr;     // forecast icons
+  BaseFont *iconS = nullptr;     // label-sized icons (traffic notice)
 };
 
 struct Data {
@@ -155,10 +162,12 @@ static Ink ink(BaseFont *font, const std::string &s) {
 }
 
 // Print `s` with the ink of `centreOn` (default: all of `s`) centred on cx.
+// `valign` is the vertical part of the alignment (TOP, CENTER_VERTICAL, ...).
 static void printInkCentred(Display &it, BaseFont *font, int cx, int y, const std::string &s,
+                            TextAlign valign = TextAlign::TOP, Color color = INK,
                             const std::string &centreOn = "") {
   Ink k = ink(font, centreOn.empty() ? s : centreOn);
-  it.print(cx - (k.left + k.right) / 2, y, font, INK, TextAlign::TOP_LEFT, s.c_str());
+  it.print(cx - (k.left + k.right) / 2, y, font, color, valign, s.c_str());
 }
 
 static int lineHeight(Display &it, BaseFont *font) {
@@ -283,20 +292,20 @@ static std::string upper(std::string s) {
   return s;
 }
 
-static std::string degrees(float v) {
-  char buf[16];
-  if (std::fabs(v - std::round(v)) < 0.05f)
-    snprintf(buf, sizeof(buf), "%.0f°", v);
-  else
-    snprintf(buf, sizeof(buf), "%.1f°", v);
-  return buf;
-}
-
 // Whole degrees, never "-0°".
 static std::string wholeDegrees(float v) {
   char buf[16];
   long n = std::lround(v);
   snprintf(buf, sizeof(buf), "%ld°", n);
+  return buf;
+}
+
+// One decimal, or none when it would be ".0": "3.2°", "3°".
+static std::string degrees(float v) {
+  if (std::fabs(v - std::round(v)) < 0.05f)
+    return wholeDegrees(v);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.1f°", v);
   return buf;
 }
 
@@ -312,66 +321,49 @@ static float feelsLike(float t, float wind) {
   return 13.12f + 0.6215f * t - 11.37f * p + 0.3965f * t * p;
 }
 
-static const char *weatherIcon(const std::string &c, bool night) {
-  if (c == "sunny")
-    return night ? "\U000F0594" : "\U000F0599";
-  if (c == "clear-night")
-    return "\U000F0594";
-  if (c == "partlycloudy")
-    return night ? "\U000F0F31" : "\U000F0595";
-  if (c == "cloudy")
-    return "\U000F0590";
-  if (c == "fog")
-    return "\U000F0591";
-  if (c == "hail")
-    return "\U000F0592";
-  if (c == "lightning")
-    return "\U000F0593";
-  if (c == "lightning-rainy")
-    return "\U000F067E";
-  if (c == "pouring")
-    return "\U000F0596";
-  if (c == "rainy")
-    return "\U000F0597";
-  if (c == "snowy")
-    return "\U000F0598";
-  if (c == "snowy-rainy")
-    return "\U000F067F";
-  if (c == "windy")
-    return "\U000F059D";
-  if (c == "windy-variant")
-    return "\U000F059E";
-  return "\U000F0F2F";
+// HA weather conditions: MDI icon by day and by night, and a short text.
+// Every icon here must be listed in the icons_xl and icons_l fonts.
+struct Weather {
+  const char *condition, *day, *night, *text;
+};
+static const Weather WEATHER[] = {
+    {"sunny", "\U000F0599", "\U000F0594", "Sunny"},
+    {"clear-night", "\U000F0594", "\U000F0594", "Clear"},
+    {"partlycloudy", "\U000F0595", "\U000F0F31", "Partly cloudy"},
+    {"cloudy", "\U000F0590", "\U000F0590", "Cloudy"},
+    {"fog", "\U000F0591", "\U000F0591", "Fog"},
+    {"hail", "\U000F0592", "\U000F0592", "Hail"},
+    {"lightning", "\U000F0593", "\U000F0593", "Thunder"},
+    {"lightning-rainy", "\U000F067E", "\U000F067E", "Thunderstorm"},
+    {"pouring", "\U000F0596", "\U000F0596", "Heavy rain"},
+    {"rainy", "\U000F0597", "\U000F0597", "Rain"},
+    {"snowy", "\U000F0598", "\U000F0598", "Snow"},
+    {"snowy-rainy", "\U000F067F", "\U000F067F", "Sleet"},
+    {"windy", "\U000F059D", "\U000F059D", "Windy"},
+    {"windy-variant", "\U000F059E", "\U000F059E", "Windy"},
+};
+
+static const Weather *weather(const std::string &condition) {
+  for (auto &w : WEATHER)
+    if (condition == w.condition)
+      return &w;
+  return nullptr;
 }
 
-static std::string weatherText(const std::string &c) {
-  if (c == "sunny")
-    return "Sunny";
-  if (c == "clear-night")
-    return "Clear";
-  if (c == "partlycloudy")
-    return "Partly cloudy";
-  if (c == "cloudy")
-    return "Cloudy";
-  if (c == "fog")
-    return "Fog";
-  if (c == "hail")
-    return "Hail";
-  if (c == "lightning")
-    return "Thunder";
-  if (c == "lightning-rainy")
-    return "Thunderstorm";
-  if (c == "pouring")
-    return "Heavy rain";
-  if (c == "rainy")
-    return "Rain";
-  if (c == "snowy")
-    return "Snow";
-  if (c == "snowy-rainy")
-    return "Sleet";
-  if (c == "windy" || c == "windy-variant")
-    return "Windy";
-  return "";
+static const char *weatherIcon(const std::string &condition, bool night) {
+  const Weather *w = weather(condition);
+  return w == nullptr ? ICON_UNKNOWN : night ? w->night : w->day;
+}
+
+static std::string weatherText(const std::string &condition) {
+  const Weather *w = weather(condition);
+  return w == nullptr ? "" : w->text;
+}
+
+// Night icons between 20:00 and 06:00.
+static bool isNight(time_t t) {
+  int h = local(t).tm_hour;
+  return h < 6 || h >= 20;
 }
 
 // Hourly forecast record: epoch | condition | temperature | precipitation | wind
@@ -411,23 +403,10 @@ static time_t forecastStart(time_t now, bool &tomorrow) {
   return dayStart(now, 0) + h * 3600;
 }
 
-// Lowest and highest temperature in the forecast between 06:00 and 22:00 of
-// the given day. False if there is no data for it.
-static bool dayRange(const std::vector<Hour> &hs, time_t day, float &lo, float &hi) {
-  lo = INFINITY;
-  hi = -INFINITY;
-  for (auto &h : hs)
-    if (h.t >= day + 6 * 3600 && h.t <= day + 22 * 3600 && !std::isnan(h.temp)) {
-      lo = std::min(lo, h.temp);
-      hi = std::max(hi, h.temp);
-    }
-  return lo <= hi;
-}
-
 // Small uppercase label with a hairline running to the end of the column,
 // or up to `aside`, which is printed right-aligned in the same style.
 static void sectionLabel(Display &it, const Fonts &f, int x, int y, int w, const std::string &text,
-                         const std::string &aside = "") {
+                         const std::string &aside = "", const char *asideIcon = nullptr) {
   std::string t = upper(text);
   it.print(x, y, f.label, INK, TextAlign::TOP_LEFT, t.c_str());
   int start = x + textWidth(it, f.label, t) + 14;
@@ -435,6 +414,13 @@ static void sectionLabel(Display &it, const Fonts &f, int x, int y, int w, const
   if (!aside.empty()) {
     it.print(end, y, f.label, INK, TextAlign::TOP_RIGHT, aside.c_str());
     end -= textWidth(it, f.label, aside) + 14;
+  }
+  if (asideIcon != nullptr) {
+    // Icon centred on the label's capitals, just left of the aside text.
+    Ink ik = ink(f.iconS, asideIcon), lk = ink(f.label, "X");
+    int cy = y + (lk.top + lk.bottom) / 2;
+    it.print(end + 6 - ik.right, cy - (ik.top + ik.bottom) / 2, f.iconS, INK, TextAlign::TOP_LEFT, asideIcon);
+    end -= ik.right - ik.left + 8;
   }
   it.filled_rectangle(start, y + lineHeight(it, f.label) / 2, end - start, 2, INK);
 }
@@ -448,56 +434,81 @@ static void drawHero(Display &it, const Fonts &f, const Data &d) {
   int tw = textWidth(it, f.clock, t);
 
   // Date, stacked next to the time. `free` is where the weather line may start.
-  int free = MX + tw + 26;
+  int x = MX + tw + 26, free = x;
   if (d.now) {
-    int x = MX + tw + 26;
     std::string wd = fmt(d.now, "%A"), dm = fmt(d.now, "%e %B");
     it.print(x, HERO_Y + 30, f.date, INK, TextAlign::TOP_LEFT, wd.c_str());
     it.print(x, HERO_Y + 72, f.dateLight, INK, TextAlign::TOP_LEFT, dm.c_str());
     free = x + std::max(textWidth(it, f.date, wd), textWidth(it, f.dateLight, dm)) + 32;
   }
 
-  // Current weather, right-aligned: icon and temperature...
+  // Current weather, laid out like HA's weather card: icon, condition and
+  // wind on the left of the right column (lined up with the forecast below),
+  // the temperature right-aligned with feels-like under it.
+  if (std::isnan(d.temperature))
+    return;
   int right = W - MX;
-  if (!std::isnan(d.temperature)) {
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%.1f°", d.temperature);
-    it.print(right, HERO_Y - 6, f.temp, INK, TextAlign::TOP_RIGHT, buf);
-    int w = textWidth(it, f.temp, buf);
-    bool night = d.now && (local(d.now).tm_hour < 6 || local(d.now).tm_hour >= 20);
-    it.print(right - w - 14, HERO_Y - 2, f.iconXL, INK, TextAlign::TOP_RIGHT, weatherIcon(d.condition, night));
-  }
+  std::string icon = weatherIcon(d.condition, d.now && isNight(d.now));
+  Ink ik = ink(f.iconXL, icon);
+  char temp[16];
+  snprintf(temp, sizeof(temp), "%.1f°", d.temperature);
+  BaseFont *tempFont = d.temperature < 0 && temp[0] == '-' ? f.tempNeg : f.temp;
+  int tempW = textWidth(it, tempFont, temp);
 
-  // ...and below them what decides the jacket: condition · feels like · wind.
-  // When it doesn't fit beside the date, drop the condition first (the icon
-  // already shows it), then the gusts.
-  std::string cond = weatherText(d.condition), feels, wind, gusts;
+  std::string cond = weatherText(d.condition), feels, wind;
   float fl = feelsLike(d.temperature, d.windSpeed);
   if (!std::isnan(fl) && std::lround(fl) != std::lround(d.temperature))
-    feels = "Feels like " + wholeDegrees(fl);
+    feels = wholeDegrees(fl);
+  // Wind as "4 (8) m/s", gusts in brackets; just "4 m/s" without notable gusts.
   if (!std::isnan(d.windSpeed)) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.0f m/s", d.windSpeed);
+    if (!std::isnan(d.windGust) && d.windGust >= d.windSpeed + 2)
+      snprintf(buf, sizeof(buf), "%.0f (%.0f) m/s", d.windSpeed, d.windGust);
+    else
+      snprintf(buf, sizeof(buf), "%.0f m/s", d.windSpeed);
     wind = buf;
-    if (!std::isnan(d.windGust) && d.windGust >= d.windSpeed + 2) {
-      snprintf(buf, sizeof(buf), ", gusts %.0f", d.windGust);
-      gusts = buf;
+  }
+  // If the date is wide enough to reach the right column, start after it.
+  int iconX = std::max(RIGHT_X, free) - ik.left;
+  int textX = iconX + ik.right + 12;
+  const int baseY = HERO_Y + 72; // temperature baseline
+  const int lowY = HERO_Y + 86;  // top of the second line
+  it.print(right, baseY, tempFont, INK, TextAlign::BASELINE_RIGHT, temp);
+
+  // Second line: wind left, feels-like right.
+  std::string feelsText = feels.empty() ? "" : "Feels like " + feels;
+  it.print(textX, lowY, f.body, INK, TextAlign::TOP_LEFT, wind.c_str());
+  if (!feelsText.empty())
+    it.print(right, lowY, f.body, INK, TextAlign::TOP_RIGHT, feelsText.c_str());
+
+  // Condition, its last line on the temperature's baseline. If one line
+  // would touch the temperature, try two lines, then the smaller label font;
+  // only then leave it out (the icon shows it anyway).
+  int condW = right - tempW - 16 - textX;
+  auto fits = [&](BaseFont *font, const std::vector<std::string> &lines) {
+    for (auto &l : lines)
+      if (l.find("…") != std::string::npos || textWidth(it, font, l) > condW)
+        return false;
+    return !lines.empty();
+  };
+  if (!cond.empty()) {
+    BaseFont *font = f.heading;
+    std::vector<std::string> lines = wrap(it, f.heading, cond, condW, 1);
+    if (!fits(font, lines))
+      lines = wrap(it, f.heading, cond, condW, 2);
+    if (!fits(font, lines)) {
+      font = f.label;
+      lines = wrap(it, f.label, cond, condW, 1);
+    }
+    if (fits(font, lines)) {
+      int lh = lineHeight(it, font);
+      for (size_t i = 0; i < lines.size(); i++)
+        it.print(textX, baseY - (int) (lines.size() - 1 - i) * lh, font, INK, TextAlign::BASELINE_LEFT,
+                 lines[i].c_str());
     }
   }
-  auto join = [](std::initializer_list<std::string> parts) {
-    std::string out;
-    for (auto &p : parts)
-      if (!p.empty())
-        out += (out.empty() ? "" : "  ·  ") + p;
-    return out;
-  };
-  std::string sub;
-  for (auto &candidate : {join({cond, feels, wind + gusts}), join({feels, wind + gusts}), join({feels, wind})}) {
-    sub = candidate;
-    if (textWidth(it, f.body, sub) <= right - free)
-      break;
-  }
-  it.print(right, HERO_Y + 86, f.body, INK, TextAlign::TOP_RIGHT, sub.c_str());
+
+  it.print(iconX, HERO_Y + 60 - (ik.top + ik.bottom) / 2, f.iconXL, INK, TextAlign::TOP_LEFT, icon.c_str());
 }
 
 // ----------------------------------------------------------------- agenda --
@@ -529,6 +540,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
   int hidden = 0;
   bool full = false;
 
+  int drawnDays = 0;
   for (int day = 0; day < CAL_DAYS; day++) {
     time_t ds = dayStart(d.now, day), de = dayStart(d.now, day + 1);
     std::vector<const Event *> todays;
@@ -545,6 +557,14 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
       continue;
     }
 
+    // A very light dotted rule between days.
+    if (drawnDays++ > 0) {
+      y += 6;
+      for (int x = LEFT_X; x < LEFT_X + LEFT_W; x += 4)
+        it.draw_pixel_at(x, y, INK);
+      y += 14;
+    }
+
     std::string title = day == 0 ? "Today" : day == 1 ? "Tomorrow" : fmt(ds, "%A");
     std::string date = fmt(ds, "%e %b");
     it.print(LEFT_X, y, f.heading, INK, TextAlign::TOP_LEFT, title.c_str());
@@ -554,7 +574,7 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
     // An empty day stays on its heading line instead of taking a row.
     if (todays.empty()) {
       it.print(dateX + textWidth(it, f.small, date) + 16, y, f.body, INK, TextAlign::TOP_LEFT, "–  Nothing planned");
-      y += hHead + 18;
+      y += hHead + 6;
       continue;
     }
     y += hHead + 8;
@@ -591,7 +611,6 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
         it.print(textX, ty + 2, f.small, INK, TextAlign::TOP_LEFT, loc.c_str());
       y += h + 12;
     }
-    y += 10;
   }
 
   if (hidden > 0 && y + hSmall <= BOTTOM + hSmall) {
@@ -603,81 +622,99 @@ static void drawAgenda(Display &it, const Fonts &f, const Data &d) {
 
 // ------------------------------------------------------------- departures --
 
-static void drawDepartures(Display &it, const Fonts &f, const Data &d) {
-  // The rows worth showing: not yet left, at most BUS_ROWS.
-  std::vector<std::vector<std::string>> rows;
-  for (auto &r : records(d.departures, 3)) {
+// Departure record: line | destination | expected epoch | state | notice
+struct Departure {
+  std::string line, destination;
+  time_t when;
+  bool cancelled, notice;
+};
+
+// The departures worth showing: not yet left, at most BUS_ROWS.
+static std::vector<Departure> departures(const std::string &s, time_t now) {
+  std::vector<Departure> out;
+  for (auto &r : records(s, 3)) {
     time_t when = (time_t) atoll(r[2].c_str());
-    if (d.now && when < d.now - 30) // still listed until it has left
+    if (now && when < now - 30) // still listed until it has left
       continue;
-    if ((int) rows.size() == BUS_ROWS)
+    if ((int) out.size() == BUS_ROWS)
       break;
-    rows.push_back(r);
+    out.push_back({r[0], r[1], when, r.size() > 3 && r[3] == "CANCELLED", r.size() > 4 && r[4] == "1"});
   }
+  return out;
+}
+
+static void drawDepartures(Display &it, const Fonts &f, const Data &d) {
+  auto rows = departures(d.departures, d.now);
   // HA flags a departure that has an SL deviation, is cancelled or runs
   // late. One flag is enough for a quiet hint to check the SL app.
-  bool notice = false;
-  for (auto &r : rows)
-    notice |= r.size() > 4 && r[4] == "1";
-  sectionLabel(it, f, RIGHT_X, BUS_Y, RIGHT_W, d.stopName, notice ? "TRAFFIC NOTICE" : "");
+  bool notice = std::any_of(rows.begin(), rows.end(), [](const Departure &r) { return r.notice; });
+  sectionLabel(it, f, RIGHT_X, BUS_Y, RIGHT_W, d.stopName, notice ? "TRAFFIC NOTICE" : "",
+               notice ? ICON_ALERT : nullptr);
 
   int right = RIGHT_X + RIGHT_W;
   int y = BUS_Y + LABEL_GAP + 8;
-  int shown = 0;
+  if (rows.empty()) {
+    it.print(RIGHT_X, y, f.body, INK, TextAlign::TOP_LEFT,
+             d.departures.empty() ? "Waiting for departures…" : "No departures");
+    return;
+  }
+
+  // One badge width for all rows, sized for a four-character line like
+  // "815C" so it doesn't jump (and ghost) as lines come and go. A longer
+  // line still widens it.
+  const int badgeH = 44, stroke = 3, badgePad = 12;
+  Ink ref = ink(f.heading, "888C");
+  int badgeW = ref.right - ref.left + 2 * badgePad;
+  for (auto &r : rows) {
+    Ink k = ink(f.heading, r.line);
+    badgeW = std::max(badgeW, k.right - k.left + 2 * badgePad);
+  }
+  auto highlight = split(d.highlightLines, ',');
+
+  // ETA column, left-aligned and wide enough for its widest form.
+  int etaW = std::max({textWidth(it, f.eta, "00:00"), textWidth(it, f.body, "Cancelled"),
+                       textWidth(it, f.eta, "00") + 6 + textWidth(it, f.small, "min")});
+  const int etaX = right - etaW;
+  const int destX = RIGHT_X + badgeW + 18;
 
   for (auto &r : rows) {
-    time_t when = (time_t) atoll(r[2].c_str());
-    bool cancelled = r.size() > 3 && r[3] == "CANCELLED";
     int cy = y + 22; // row centre line
 
     // Line number on a rounded badge: white on black for the lines that
     // matter most, black in an outline for the rest.
-    const int badgeW = 70, badgeH = 44, stroke = 3;
-    bool filled = false;
-    for (auto &l : split(d.highlightLines, ','))
-      filled |= !l.empty() && l == r[0];
+    bool filled = std::find(highlight.begin(), highlight.end(), r.line) != highlight.end();
     fillRound(it, RIGHT_X, cy - badgeH / 2, badgeW, badgeH, 10, INK);
     if (!filled)
       fillRound(it, RIGHT_X + stroke, cy - badgeH / 2 + stroke, badgeW - 2 * stroke, badgeH - 2 * stroke,
                 10 - stroke, PAPER);
-    it.print(RIGHT_X + badgeW / 2, cy + 1, f.heading, filled ? PAPER : INK, TextAlign::CENTER, r[0].c_str());
+    printInkCentred(it, f.heading, RIGHT_X + badgeW / 2, cy + 1, r.line, TextAlign::CENTER_VERTICAL,
+                    filled ? PAPER : INK);
 
-    // ETA: big number with a small unit, or a clock time an hour+ out.
-    int etaW;
-    if (cancelled) {
-      it.print(right, cy, f.small, INK, TextAlign::CENTER_RIGHT, "Cancelled");
-      etaW = textWidth(it, f.small, "Cancelled");
+    // ETA: numbers are big (minutes with a small unit, a clock time an hour
+    // or more out, or "Now" at the same height); "Cancelled" is regular
+    // weight, since the struck-through destination already says most of it.
+    if (r.cancelled) {
+      it.print(etaX, cy, f.body, INK, TextAlign::CENTER_LEFT, "Cancelled");
     } else {
-      long mins = d.now ? (long) (when - d.now) / 60 : 999;
+      long mins = d.now ? (long) (r.when - d.now) / 60 : 999;
       if (mins <= 0) {
-        it.print(right, cy, f.eta, INK, TextAlign::CENTER_RIGHT, "Now");
-        etaW = textWidth(it, f.eta, "Now");
+        it.print(etaX, cy, f.eta, INK, TextAlign::CENTER_LEFT, "Now");
       } else if (mins < 60) {
-        char n[8];
-        snprintf(n, sizeof(n), "%ld", mins);
-        int uw = textWidth(it, f.small, "min");
-        it.print(right, cy + 6, f.small, INK, TextAlign::CENTER_RIGHT, "min");
-        it.print(right - uw - 6, cy, f.eta, INK, TextAlign::CENTER_RIGHT, n);
-        etaW = uw + 6 + textWidth(it, f.eta, n);
+        std::string n = std::to_string(mins);
+        it.print(etaX, cy, f.eta, INK, TextAlign::CENTER_LEFT, n.c_str());
+        it.print(etaX + textWidth(it, f.eta, n) + 6, cy + 6, f.small, INK, TextAlign::CENTER_LEFT, "min");
       } else {
-        std::string hm = fmt(when, "%H:%M");
-        it.print(right, cy, f.eta, INK, TextAlign::CENTER_RIGHT, hm.c_str());
-        etaW = textWidth(it, f.eta, hm);
+        it.print(etaX, cy, f.eta, INK, TextAlign::CENTER_LEFT, fmt(r.when, "%H:%M").c_str());
       }
     }
 
-    int destX = RIGHT_X + badgeW + 18;
-    std::string dest = ellipsize(it, f.heading, r[1], right - etaW - 16 - destX);
+    std::string dest = ellipsize(it, f.heading, r.destination, etaX - 16 - destX);
     it.print(destX, cy, f.heading, INK, TextAlign::CENTER_LEFT, dest.c_str());
-    if (cancelled)
+    if (r.cancelled)
       it.filled_rectangle(destX, cy, textWidth(it, f.heading, dest), 2, INK);
 
     y += BUS_ROW_H;
-    shown++;
   }
-  if (shown == 0)
-    it.print(RIGHT_X, y, f.body, INK, TextAlign::TOP_LEFT,
-             d.departures.empty() ? "Waiting for departures…" : "No departures");
 }
 
 // --------------------------------------------------------------- forecast --
@@ -687,17 +724,23 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
   bool tomorrow = false;
   time_t start = d.now ? forecastStart(d.now, tomorrow) : 0;
 
-  // The day's range sits on the label line: low–high from 06 to 22.
+  // Low and high over exactly the hours the table spans (every hour, not
+  // only the shown slots), on the label line.
   std::string range;
-  float lo, hi;
-  if (d.now && dayRange(hs, dayStart(d.now, tomorrow ? 1 : 0), lo, hi)) {
-    // Include the current reading so today's range never excludes "now".
-    if (!tomorrow && !std::isnan(d.temperature)) {
-      lo = std::min(lo, d.temperature);
-      hi = std::max(hi, d.temperature);
+  float lo = INFINITY, hi = -INFINITY;
+  time_t end = start + (time_t) (FORECAST_SLOTS - 1) * FORECAST_STEP_H * 3600;
+  for (auto &h : hs)
+    if (h.t >= start - 1800 && h.t <= end + 1800 && !std::isnan(h.temp)) {
+      lo = std::min(lo, h.temp);
+      hi = std::max(hi, h.temp);
     }
-    range = wholeDegrees(lo) + " – " + wholeDegrees(hi);
+  // Include the current reading so "later today" never excludes now.
+  if (lo <= hi && !tomorrow && !std::isnan(d.temperature)) {
+    lo = std::min(lo, d.temperature);
+    hi = std::max(hi, d.temperature);
   }
+  if (lo <= hi)
+    range = wholeDegrees(lo) + " – " + wholeDegrees(hi);
   sectionLabel(it, f, RIGHT_X, FORECAST_Y, RIGHT_W, tomorrow ? "Tomorrow" : "Later today", range);
 
   int y = FORECAST_Y + LABEL_GAP;
@@ -724,15 +767,14 @@ static void drawForecast(Display &it, const Fonts &f, const Data &d) {
     printInkCentred(it, f.small, cx, y, fmt(slot, "%H"));
     if (h == nullptr)
       continue;
-    int hr = local(slot).tm_hour;
     // Icons also share a vertical centre line, whatever their shape.
-    std::string icon = weatherIcon(h->condition, hr < 6 || hr >= 20);
+    std::string icon = weatherIcon(h->condition, isNight(slot));
     Ink k = ink(f.iconL, icon);
     printInkCentred(it, f.iconL, cx, y + 54 - (k.top + k.bottom) / 2, icon);
     if (!std::isnan(h->temp)) {
       // Centre the number and let the ° hang.
       std::string t = degrees(h->temp);
-      printInkCentred(it, f.heading, cx, y + 84, t, t.substr(0, t.size() - strlen("°")));
+      printInkCentred(it, f.heading, cx, y + 84, t, TextAlign::TOP, INK, t.substr(0, t.size() - strlen("°")));
     }
     char buf[16];
     if (!std::isnan(h->wind)) {

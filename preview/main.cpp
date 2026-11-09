@@ -20,6 +20,11 @@ struct FontSpec {
   const char *id, *path;
   int size;
   const char *glyphs;
+  int bpp;
+};
+struct FontField {
+  esphome::display::BaseFont *dash::Fonts::*member;
+  const char *id;
 };
 #include "fonts.inc"
 
@@ -123,7 +128,7 @@ static std::vector<Scenario> scenarios() {
                     event(h(2, 7, 30), h(2, 8, 0), false, "Löpning") +
                     event(h(3, 12, 0), h(3, 13, 0), false, "Lunch med Sara");
          d.departures = bus("875", "Gullmarsplan", d.now) + bus("824", "Rudsjöterrassen", d.now + 4 * 60, "CANCELLED") +
-                        bus("875", "Gullmarsplan", d.now + 9 * 60) + bus("875", "Gullmarsplan", d.now + 75 * 60);
+                        bus("815C", "Slussen", d.now + 9 * 60) + bus("875", "Gullmarsplan", d.now + 75 * 60);
        }},
       // After 20:00 the forecast switches to tomorrow.
       {"evening",
@@ -163,19 +168,24 @@ int main(int argc, char **argv) {
   FT_Init_FreeType(&lib);
   std::map<std::string, display::BaseFont *> byId;
   for (auto &s : FONT_SPECS)
-    byId[s.id] = new display::BaseFont(lib, s.path, s.size, s.glyphs);
-  std::vector<display::BaseFont *> ordered;
-  for (auto *id : FONT_ORDER)
-    ordered.push_back(byId.at(id));
-  // dash::Fonts is a struct of BaseFont pointers in lambda order.
+    byId[s.id] = new display::BaseFont(lib, s.path, s.size, s.glyphs, s.bpp);
+  // dash::Fonts, filled the way the display lambda fills it.
   dash::Fonts f;
+  for (auto &field : FONT_FIELDS)
+    f.*field.member = byId.at(field.id);
   static_assert(sizeof(dash::Fonts) % sizeof(void *) == 0, "Fonts must be pointers only");
-  if (ordered.size() != sizeof(dash::Fonts) / sizeof(void *)) {
-    fprintf(stderr, "dash::Fonts has %zu members, the lambda passes %zu\n", sizeof(dash::Fonts) / sizeof(void *),
-            ordered.size());
+  size_t members = sizeof(dash::Fonts) / sizeof(void *);
+  if (sizeof(FONT_FIELDS) / sizeof(FONT_FIELDS[0]) != members) {
+    fprintf(stderr, "dash::Fonts has %zu members, the lambda assigns %zu\n", members,
+            sizeof(FONT_FIELDS) / sizeof(FONT_FIELDS[0]));
     return 1;
   }
-  memcpy(&f, ordered.data(), sizeof(f));
+  for (auto &a : FONT_FIELDS)
+    for (auto &b : FONT_FIELDS)
+      if (&a != &b && a.member == b.member) {
+        fprintf(stderr, "a dash::Fonts member is assigned twice (%s, %s)\n", a.id, b.id);
+        return 1;
+      }
 
   qr_code::QrCode qr(QR);
   int status = 0;
@@ -183,7 +193,7 @@ int main(int argc, char **argv) {
     dash::Data d;
     sc.fill(d);
     d.stopName = "Rotvik";
-    d.highlightLines = "875,804,805";
+    d.highlightLines = "875,804,805,815C";
     d.qr = &qr;
     d.qrPayload = QR;
     display::Display it(dash::W, dash::H);

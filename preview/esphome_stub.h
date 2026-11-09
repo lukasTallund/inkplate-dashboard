@@ -99,12 +99,12 @@ static std::vector<uint32_t> codepoints(const char *s) {
 
 struct Glyph {
   int advance, offset_x, offset_y, width, height;
-  std::vector<uint8_t> bits; // one byte per pixel, 0/1
+  std::vector<uint8_t> levels; // one byte per pixel, 0..(1<<bpp)-1
 };
 
 class BaseFont {
  public:
-  BaseFont(FT_Library lib, const char *path, int size, const char *glyphs) {
+  BaseFont(FT_Library lib, const char *path, int size, const char *glyphs, int bpp = 1) : bpp_(bpp) {
     if (FT_New_Face(lib, path, 0, &face_) != 0) {
       fprintf(stderr, "cannot load %s\n", path);
       exit(1);
@@ -141,6 +141,7 @@ class BaseFont {
 
   void print(int x, int y, Display *d, Color color, const char *s);
   const Glyph *find_glyph(uint32_t c) { return glyph(c); }
+  int get_bpp() const { return bpp_; }
 
   std::vector<uint32_t> missing; // code points asked for but not in the font
 
@@ -157,7 +158,9 @@ class BaseFont {
     if (it != cache_.end())
       return it->second.width < 0 ? nullptr : &it->second;
     Glyph g{};
-    if (FT_Get_Char_Index(face_, c) == 0 || FT_Load_Char(face_, c, FT_LOAD_RENDER | FT_LOAD_TARGET_MONO) != 0) {
+    // Same load flags as ESPHome's font component.
+    FT_Int32 flags = FT_LOAD_RENDER | (bpp_ == 1 ? FT_LOAD_TARGET_MONO : FT_LOAD_NO_BITMAP);
+    if (FT_Get_Char_Index(face_, c) == 0 || FT_Load_Char(face_, c, flags) != 0) {
       g.width = -1;
       if (std::find(missing.begin(), missing.end(), c) == missing.end())
         missing.push_back(c);
@@ -170,15 +173,18 @@ class BaseFont {
     g.offset_y = ascender_ - s->bitmap_top;
     g.width = s->bitmap.width;
     g.height = s->bitmap.rows;
-    g.bits.resize(g.width * g.height);
+    g.levels.resize(g.width * g.height);
+    int scale = 256 >> bpp_;
     for (int yy = 0; yy < g.height; yy++)
       for (int xx = 0; xx < g.width; xx++)
-        g.bits[yy * g.width + xx] = (s->bitmap.buffer[yy * s->bitmap.pitch + xx / 8] >> (7 - xx % 8)) & 1;
+        g.levels[yy * g.width + xx] = bpp_ == 1 ? (s->bitmap.buffer[yy * s->bitmap.pitch + xx / 8] >> (7 - xx % 8)) & 1
+                                                : s->bitmap.buffer[yy * s->bitmap.pitch + xx] / scale;
     cache_[c] = g;
     return &cache_[c];
   }
 
   FT_Face face_;
+  int bpp_;
   int ascender_, height_, fallback_advance_;
   std::vector<uint32_t> allowed_;
   std::map<uint32_t, Glyph> cache_;
@@ -213,9 +219,10 @@ class Display {
  public:
   Display(int w, int h) : w_(w), h_(h), px_(w * h, 255) {}
 
+  // 1-bit panel, as in the Inkplate driver: any non-zero colour is white.
   void draw_pixel_at(int x, int y, Color c) {
     if (x >= 0 && y >= 0 && x < w_ && y < h_)
-      px_[y * w_ + x] = c.r;  // 1-bit panel: INK is 0, PAPER 255
+      px_[y * w_ + x] = (c.r || c.g || c.b || c.w) ? 255 : 0;
   }
   void fill(Color c) { std::fill(px_.begin(), px_.end(), c.r); }
   void filled_rectangle(int x, int y, int w, int h, Color c) {
@@ -288,10 +295,18 @@ inline void BaseFont::print(int x, int y, Display *d, Color color, const char *s
       at += fallback_advance_;
       continue;
     }
+    // ESPHome's Font::print with the default black background: full
+    // pixels get `color`, partial ones a blend of color and black.
+    int max = (1 << bpp_) - 1;
     for (int yy = 0; yy < g->height; yy++)
-      for (int xx = 0; xx < g->width; xx++)
-        if (g->bits[yy * g->width + xx])
-          d->draw_pixel_at(at + g->offset_x + xx, y + g->offset_y + yy, color);
+      for (int xx = 0; xx < g->width; xx++) {
+        int v = g->levels[yy * g->width + xx];
+        if (v == 0)
+          continue;
+        float on = (float) v / max;
+        Color c = v == max ? color : Color(color.r * on, color.g * on, color.b * on, color.w * on);
+        d->draw_pixel_at(at + g->offset_x + xx, y + g->offset_y + yy, c);
+      }
     at += g->advance;
   }
 }
